@@ -7,6 +7,7 @@
  * - 복합 태그(compoundTags) 섹션: requires / excludes 표시
  * - 태그 추가/수정/삭제 (로컬 스토어)
  * - tagCategories 표시 및 편집
+ * - 태그 분할 / 병합 (TagSplit, TagMerge)
  */
 import { useState, useMemo } from 'react';
 import {
@@ -20,7 +21,6 @@ import {
   Form,
   Input,
   Select,
-  InputNumber,
   Popconfirm,
   Badge,
   Card,
@@ -38,14 +38,22 @@ import {
   ReloadOutlined,
   TagsOutlined,
   AppstoreOutlined,
+  ScissorOutlined,
+  MergeCellsOutlined,
 } from '@ant-design/icons';
 import { useDataStore } from '@/stores/dataStore';
 import { useUiStore } from '@/stores/uiStore';
-import type { TagDefinition, CompoundTag, TagExtractionMethod, TagTier } from '@/types/tag';
+import type {
+  TagDefinition,
+  CompoundTag,
+  TagExtractionMethod,
+} from '@/types/tag';
 import {
   TAG_EXTRACTION_METHOD_LABELS,
   TAG_TIER_LABELS,
 } from '@/types/tag';
+import TagSplit from '@/components/tags/TagSplit';
+import TagMerge from '@/components/tags/TagMerge';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -55,7 +63,7 @@ const { TextArea } = Input;
 // 상수
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TIER_COLORS: Record<TagTier, string> = { 1: 'blue', 2: 'purple' };
+const TIER_COLORS: Record<number, string> = { 1: 'blue', 2: 'purple' };
 const EXTRACTION_COLORS: Record<TagExtractionMethod, string> = {
   regex: 'green',
   ast:   'orange',
@@ -74,7 +82,7 @@ const DETECTION_TYPE_COLORS: Record<string, string> = {
 
 interface TagModalProps {
   open: boolean;
-  tagName: string | null;       // null = 신규
+  tagName: string | null;
   initial?: TagDefinition;
   categories: string[];
   onOk: (name: string, tag: TagDefinition) => void;
@@ -84,22 +92,6 @@ interface TagModalProps {
 function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagModalProps) {
   const [form] = Form.useForm();
   const isNew  = tagName === null;
-
-  const handleOk = async () => {
-    try {
-      const values = await form.validateFields();
-      const detection = buildDetection(values);
-      const tag: TagDefinition = {
-        category:         values.category,
-        description:      values.description,
-        extractionMethod: values.extractionMethod,
-        tier:             values.tier,
-        detection,
-      };
-      onOk(isNew ? values.name : tagName!, tag);
-      form.resetFields();
-    } catch { /* validateFields 에러는 폼에서 표시 */ }
-  };
 
   const buildDetection = (values: Record<string, unknown>) => {
     const type = values.detectionType as string;
@@ -122,15 +114,38 @@ function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagMod
     return { type: type as 'ast', nodeType: values.nodeType as string | undefined };
   };
 
+  const handleOk = async () => {
+    try {
+      const values = await form.validateFields();
+      const detection = buildDetection(values);
+      const tag: TagDefinition = {
+        category:         values.category,
+        description:      values.description,
+        extractionMethod: values.extractionMethod,
+        tier:             values.tier,
+        detection,
+      };
+      onOk(isNew ? values.name : tagName!, tag);
+      form.resetFields();
+    } catch { /* validateFields 에러는 폼에서 표시 */ }
+  };
+
   const getInitialValues = () => {
-    if (!initial) return { tier: 1, extractionMethod: 'regex', detectionType: 'regex', matchType: 'any' };
+    if (!initial) {
+      return {
+        tier: 1,
+        extractionMethod: 'regex',
+        detectionType: 'regex',
+        matchType: 'any',
+      };
+    }
     const d = initial.detection;
     return {
-      category: initial.category,
-      description: initial.description,
+      category:         initial.category,
+      description:      initial.description,
       extractionMethod: initial.extractionMethod,
-      tier: initial.tier,
-      detectionType: d.type,
+      tier:             initial.tier,
+      detectionType:    d.type,
       patterns:    d.type === 'regex' ? (d.patterns ?? []).join('\n') : '',
       matchType:   d.type === 'regex' ? (d.matchType ?? 'any') : 'any',
       criteria:    d.type === 'llm'   ? (d.criteria ?? '') : '',
@@ -212,7 +227,11 @@ function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagMod
             if (type === 'regex') return (
               <>
                 <Form.Item name="patterns" label="패턴 (줄바꿈으로 구분)">
-                  <TextArea rows={3} placeholder="정규식 패턴 (한 줄에 하나)" style={{ fontFamily: 'monospace', fontSize: 12 }} />
+                  <TextArea
+                    rows={3}
+                    placeholder="정규식 패턴 (한 줄에 하나)"
+                    style={{ fontFamily: 'monospace', fontSize: 12 }}
+                  />
                 </Form.Item>
                 <Form.Item name="matchType" label="매치 조건">
                   <Select>
@@ -229,7 +248,10 @@ function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagMod
                   <TextArea rows={3} placeholder="LLM에게 전달할 판단 기준" />
                 </Form.Item>
                 <Form.Item name="triggerTags" label="선행 조건 태그 (쉼표 구분)">
-                  <Input placeholder="예: IS_CONTROLLER, IS_SERVICE" style={{ fontFamily: 'monospace' }} />
+                  <Input
+                    placeholder="예: IS_CONTROLLER, IS_SERVICE"
+                    style={{ fontFamily: 'monospace' }}
+                  />
                 </Form.Item>
               </>
             );
@@ -262,9 +284,11 @@ function CompoundTagModal({ open, tagName, initial, onOk, onCancel }: CompoundTa
       const values = await form.validateFields();
       const tag: CompoundTag = {
         description: values.description,
-        requires: (values.requires as string ?? '').split(',').map((t: string) => t.trim()).filter(Boolean),
-        excludes: (values.excludes as string ?? '').split(',').map((t: string) => t.trim()).filter(Boolean),
-        severity: values.severity || undefined,
+        requires: (values.requires as string ?? '')
+          .split(',').map((t: string) => t.trim()).filter(Boolean),
+        excludes: (values.excludes as string ?? '')
+          .split(',').map((t: string) => t.trim()).filter(Boolean),
+        severity:   values.severity   || undefined,
         expression: values.expression || undefined,
       };
       onOk(isNew ? values.name : tagName!, tag);
@@ -294,17 +318,26 @@ function CompoundTagModal({ open, tagName, initial, onOk, onCancel }: CompoundTa
       <Form form={form} layout="vertical" initialValues={getInitialValues()}>
         {isNew && (
           <Form.Item name="name" label="복합 태그 이름" rules={[{ required: true }]}>
-            <Input placeholder="예: resource_leak_risk" style={{ fontFamily: 'monospace' }} />
+            <Input
+              placeholder="예: resource_leak_risk"
+              style={{ fontFamily: 'monospace' }}
+            />
           </Form.Item>
         )}
         <Form.Item name="description" label="설명" rules={[{ required: true }]}>
           <Input placeholder="복합 태그 설명" />
         </Form.Item>
         <Form.Item name="requires" label="필수 태그 (쉼표 구분)">
-          <Input placeholder="예: USES_CONNECTION, HAS_SQL_CONCATENATION" style={{ fontFamily: 'monospace' }} />
+          <Input
+            placeholder="예: USES_CONNECTION, HAS_SQL_CONCATENATION"
+            style={{ fontFamily: 'monospace' }}
+          />
         </Form.Item>
         <Form.Item name="excludes" label="제외 태그 (쉼표 구분)">
-          <Input placeholder="예: HAS_TRY_WITH_RESOURCES" style={{ fontFamily: 'monospace' }} />
+          <Input
+            placeholder="예: HAS_TRY_WITH_RESOURCES"
+            style={{ fontFamily: 'monospace' }}
+          />
         </Form.Item>
         <Row gutter={12}>
           <Col span={12}>
@@ -318,7 +351,10 @@ function CompoundTagModal({ open, tagName, initial, onOk, onCancel }: CompoundTa
           </Col>
           <Col span={12}>
             <Form.Item name="expression" label="불리언 표현식 (선택)">
-              <Input placeholder="예: TAG_A && !TAG_B" style={{ fontFamily: 'monospace' }} />
+              <Input
+                placeholder="예: TAG_A && !TAG_B"
+                style={{ fontFamily: 'monospace' }}
+              />
             </Form.Item>
           </Col>
         </Row>
@@ -328,7 +364,7 @@ function CompoundTagModal({ open, tagName, initial, onOk, onCancel }: CompoundTa
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 태그 카테고리 편집 모달
+// 카테고리 편집 모달
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CategoryModalProps {
@@ -397,12 +433,14 @@ export default function TagsPage() {
   const notifySuccess     = useUiStore((s) => s.notifySuccess);
   const notifyError       = useUiStore((s) => s.notifyError);
 
-  // 모달 상태
-  const [tagModal, setTagModal]             = useState<{ open: boolean; name: string | null }>({ open: false, name: null });
-  const [compoundModal, setCompoundModal]   = useState<{ open: boolean; name: string | null }>({ open: false, name: null });
-  const [categoryModal, setCategoryModal]   = useState<{ open: boolean; id: string | null }>({ open: false, id: null });
+  // ── 모달 상태 ─────────────────────────────────────────────────────────────
+  const [tagModal, setTagModal]           = useState<{ open: boolean; name: string | null }>({ open: false, name: null });
+  const [compoundModal, setCompoundModal] = useState<{ open: boolean; name: string | null }>({ open: false, name: null });
+  const [categoryModal, setCategoryModal] = useState<{ open: boolean; id: string | null }>({ open: false, id: null });
+  const [splitOpen, setSplitOpen]         = useState(false);
+  const [mergeOpen, setMergeOpen]         = useState(false);
 
-  // 카테고리별 태그 그룹핑
+  // ── 카테고리별 태그 그룹핑 ────────────────────────────────────────────────
   const tagsByCategory = useMemo(() => {
     const map: Record<string, Array<{ name: string; def: TagDefinition }>> = {};
     Object.entries(tags.tags).forEach(([name, def]) => {
@@ -413,8 +451,8 @@ export default function TagsPage() {
     return map;
   }, [tags.tags]);
 
-  const categoryList = Object.keys(tags.tagCategories);
-  const tagCount     = Object.keys(tags.tags).length;
+  const categoryList  = Object.keys(tags.tagCategories);
+  const tagCount      = Object.keys(tags.tags).length;
   const compoundCount = Object.keys(tags.compoundTags).length;
 
   // ── Pull ──────────────────────────────────────────────────────────────────
@@ -462,9 +500,9 @@ export default function TagsPage() {
     {
       title: 'Tier',
       key: 'tier',
-      width: 120,
+      width: 130,
       render: (_, { def }) => (
-        <Tag color={TIER_COLORS[def.tier]} style={{ fontSize: 11 }}>
+        <Tag color={TIER_COLORS[def.tier] ?? 'default'} style={{ fontSize: 11 }}>
           {TAG_TIER_LABELS[def.tier]}
         </Tag>
       ),
@@ -484,7 +522,10 @@ export default function TagsPage() {
       key: 'detectionType',
       width: 100,
       render: (_, { def }) => (
-        <Tag color={DETECTION_TYPE_COLORS[def.detection.type] ?? 'default'} style={{ fontSize: 11 }}>
+        <Tag
+          color={DETECTION_TYPE_COLORS[def.detection.type] ?? 'default'}
+          style={{ fontSize: 11 }}
+        >
           {def.detection.type}
         </Tag>
       ),
@@ -509,10 +550,7 @@ export default function TagsPage() {
               type="text"
               size="small"
               icon={<EditOutlined />}
-              onClick={() => {
-                upsertTag(name, def); // 현재 값 보존
-                setTagModal({ open: true, name });
-              }}
+              onClick={() => setTagModal({ open: true, name })}
             />
           </Tooltip>
           <Popconfirm
@@ -526,7 +564,12 @@ export default function TagsPage() {
             cancelText="취소"
             okButtonProps={{ danger: true }}
           >
-            <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+            <Button
+              type="text"
+              danger
+              size="small"
+              icon={<DeleteOutlined />}
+            />
           </Popconfirm>
         </Space>
       ),
@@ -558,9 +601,12 @@ export default function TagsPage() {
     };
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // 렌더
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div>
-      {/* ── 타이틀 + 액션 ─────────────────────────────────────────────────── */}
+      {/* ── 타이틀 + 액션 버튼 ───────────────────────────────────────────── */}
       <div
         style={{
           display: 'flex',
@@ -577,6 +623,12 @@ export default function TagsPage() {
         <Space>
           <Button icon={<ReloadOutlined />} onClick={handlePull} loading={isLoading}>
             Pull
+          </Button>
+          <Button icon={<ScissorOutlined />} onClick={() => setSplitOpen(true)}>
+            태그 분할
+          </Button>
+          <Button icon={<MergeCellsOutlined />} onClick={() => setMergeOpen(true)}>
+            태그 병합
           </Button>
           <Button
             type="primary"
@@ -700,12 +752,20 @@ export default function TagsPage() {
                       cancelText="취소"
                       okButtonProps={{ danger: true }}
                     >
-                      <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+                      <Button
+                        type="text"
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                      />
                     </Popconfirm>
                   </Space>
                 }
               >
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                <Text
+                  type="secondary"
+                  style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
+                >
                   {ct.description}
                 </Text>
 
@@ -774,6 +834,9 @@ export default function TagsPage() {
         onOk={handleCategoryOk}
         onCancel={() => setCategoryModal({ open: false, id: null })}
       />
+
+      <TagSplit open={splitOpen} onClose={() => setSplitOpen(false)} />
+      <TagMerge open={mergeOpen} onClose={() => setMergeOpen(false)} />
     </div>
   );
 }
