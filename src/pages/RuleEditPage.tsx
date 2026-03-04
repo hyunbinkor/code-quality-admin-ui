@@ -1,70 +1,762 @@
 /**
- * RuleEditPage.tsx
- * 규칙 편집 페이지.
- * - 폼 모드 (Ant Design Form) — Step 8에서 구현
- * - JSON 직접 편집 모드 (Monaco Editor) — Step 8에서 구현
- * - 유효성 검사 — Step 8에서 구현
+ * src/pages/RuleEditPage.tsx
+ *
+ * 규칙 편집 페이지 (/rules/new 또는 /rules/:ruleId).
+ * - 폼 모드: Ant Design Form으로 각 필드 직접 편집
+ * - JSON 모드: Monaco Editor로 Rule 전체를 JSON으로 편집
+ * - 저장: 로컬 dataStore + IndexedDB snapshot:current 업데이트
  */
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, Card, Space, Typography, Alert, Descriptions } from 'antd';
-import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
+import {
+  Form,
+  Input,
+  Select,
+  Switch,
+  Button,
+  Space,
+  Card,
+  Typography,
+  Divider,
+  InputNumber,
+  Tag,
+  Segmented,
+  Popconfirm,
+  Alert,
+  Row,
+  Col,
+} from 'antd';
+import {
+  ArrowLeftOutlined,
+  SaveOutlined,
+  FormOutlined,
+  CodeOutlined,
+  PlusOutlined,
+  DeleteOutlined,
+} from '@ant-design/icons';
+import Editor from '@monaco-editor/react';
+import { useDataStore } from '@/stores/dataStore';
+import { useUiStore } from '@/stores/uiStore';
+import type { Rule, RuleCategory, RuleSeverity, RuleCheckType } from '@/types/rule';
+import {
+  RULE_CATEGORY_LABELS,
+  RULE_SEVERITY_LABELS,
+  RULE_SEVERITY_COLORS,
+  RULE_CHECK_TYPE_LABELS,
+} from '@/types/rule';
 
 const { Title, Text } = Typography;
+const { TextArea } = Input;
+const { Option } = Select;
 
-export default function RuleEditPage() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const isNew = !id;
+// antd v6에서 Divider orientation 타입이 외부로 export되지 않는 버그성 이슈.
+// as any로 완전 우회합니다.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const LEFT = 'left' as any;
+
+type EditMode = 'form' | 'json';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 새 규칙 기본값
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_RULE: Rule = {
+  ruleId: '',
+  sectionNumber: '',
+  title: '',
+  level: 3,
+  category: 'general',
+  severity: 'MEDIUM',
+  description: '',
+  message: '',
+  suggestion: '',
+  keywords: [],
+  source: '',
+  sourceFile: '',
+  sourcePrefix: '',
+  problematicCode: null,
+  fixedCode: null,
+  hasTables: false,
+  hasImages: false,
+  tables: [],
+  metadata: {
+    createdAt: new Date().toISOString(),
+    source: '',
+    sourceFile: '',
+    version: '1.0',
+  },
+  checkType: 'llm_with_regex',
+  checkTypeReason: '',
+  tagCondition: '',
+  requiredTags: [],
+  excludeTags: [],
+  antiPatterns: [],
+  goodPatterns: [],
+  isActive: true,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 패턴 배열 편집기 서브 컴포넌트
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface PatternItem {
+  pattern: string;
+  flags: string;
+  description: string;
+}
+
+interface PatternEditorProps {
+  label: string;
+  value: PatternItem[];
+  onChange: (v: PatternItem[]) => void;
+}
+
+function PatternEditor({ label, value, onChange }: PatternEditorProps) {
+  const add = () =>
+    onChange([...value, { pattern: '', flags: 'g', description: '' }]);
+
+  const remove = (idx: number) =>
+    onChange(value.filter((_, i) => i !== idx));
+
+  const update = (idx: number, field: keyof PatternItem, val: string) => {
+    const next = value.map((item, i) =>
+      i === idx ? { ...item, [field]: val } : item,
+    );
+    onChange(next);
+  };
 
   return (
     <div>
-      {/* 헤더 */}
+      {value.map((item, idx) => (
+        <Card
+          key={idx}
+          size="small"
+          style={{ marginBottom: 8, background: '#fafafa' }}
+          extra={
+            <Button
+              type="text"
+              danger
+              size="small"
+              icon={<DeleteOutlined />}
+              onClick={() => remove(idx)}
+            />
+          }
+          title={
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {label} #{idx + 1}
+            </Text>
+          }
+        >
+          <Row gutter={8}>
+            <Col span={16}>
+              <Form.Item label="pattern" style={{ marginBottom: 4 }}>
+                <Input
+                  value={item.pattern}
+                  onChange={(e) => update(idx, 'pattern', e.target.value)}
+                  placeholder="정규식 문자열"
+                  style={{ fontFamily: 'monospace', fontSize: 12 }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item label="flags" style={{ marginBottom: 4 }}>
+                <Input
+                  value={item.flags}
+                  onChange={(e) => update(idx, 'flags', e.target.value)}
+                  placeholder="g, gi, gs..."
+                  style={{ fontFamily: 'monospace', fontSize: 12 }}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="description" style={{ marginBottom: 0 }}>
+            <Input
+              value={item.description}
+              onChange={(e) => update(idx, 'description', e.target.value)}
+              placeholder="패턴 설명"
+            />
+          </Form.Item>
+        </Card>
+      ))}
+      <Button
+        type="dashed"
+        icon={<PlusOutlined />}
+        onClick={add}
+        size="small"
+        style={{ width: '100%' }}
+      >
+        {label} 추가
+      </Button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 메인 페이지
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function RuleEditPage() {
+  const { id }   = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const isNew    = !id || id === 'new';
+
+  const rules         = useDataStore((s) => s.rules);
+  const addRule       = useDataStore((s) => s.addRule);
+  const updateRule    = useDataStore((s) => s.updateRule);
+  const notifySuccess = useUiStore((s) => s.notifySuccess);
+  const notifyError   = useUiStore((s) => s.notifyError);
+
+  const [mode, setMode]                 = useState<EditMode>('form');
+  const [form]                          = Form.useForm<Rule>();
+  const [jsonValue, setJsonValue]       = useState('');
+  const [jsonError, setJsonError]       = useState<string | null>(null);
+  const [keywords, setKeywords]         = useState<string[]>([]);
+  const [requiredTags, setRequiredTags] = useState<string[]>([]);
+  const [excludeTags, setExcludeTags]   = useState<string[]>([]);
+  const [antiPatterns, setAntiPatterns] = useState<PatternItem[]>([]);
+  const [goodPatterns, setGoodPatterns] = useState<PatternItem[]>([]);
+  const [kwInput, setKwInput]   = useState('');
+  const [reqInput, setReqInput] = useState('');
+  const [excInput, setExcInput] = useState('');
+
+  // ── 초기 데이터 로드 ────────────────────────────────────────────────────
+  const initFromRule = useCallback(
+    (rule: Rule) => {
+      form.setFieldsValue(rule);
+      setKeywords(rule.keywords ?? []);
+      setRequiredTags(rule.requiredTags ?? []);
+      setExcludeTags(rule.excludeTags ?? []);
+      setAntiPatterns(rule.antiPatterns ?? []);
+      setGoodPatterns(rule.goodPatterns ?? []);
+      setJsonValue(JSON.stringify(rule, null, 2));
+    },
+    [form],
+  );
+
+  useEffect(() => {
+    if (isNew) {
+      form.setFieldsValue(DEFAULT_RULE);
+      setJsonValue(JSON.stringify(DEFAULT_RULE, null, 2));
+      setKeywords([]);
+      setRequiredTags([]);
+      setExcludeTags([]);
+      setAntiPatterns([]);
+      setGoodPatterns([]);
+    } else {
+      const found = rules.find((r) => r.ruleId === id);
+      if (found) {
+        initFromRule(found);
+      } else {
+        notifyError('규칙을 찾을 수 없습니다.', `ruleId: ${id}`);
+        navigate('/rules');
+      }
+    }
+  }, [id, isNew, rules, form, initFromRule, navigate, notifyError]);
+
+  // ── 모드 전환: 폼 → JSON ────────────────────────────────────────────────
+  const switchToJson = () => {
+    const values = form.getFieldsValue(true) as Rule;
+    const merged: Rule = {
+      ...values,
+      keywords,
+      requiredTags,
+      excludeTags,
+      antiPatterns,
+      goodPatterns,
+    };
+    setJsonValue(JSON.stringify(merged, null, 2));
+    setJsonError(null);
+    setMode('json');
+  };
+
+  // ── 모드 전환: JSON → 폼 ────────────────────────────────────────────────
+  const switchToForm = () => {
+    try {
+      const parsed = JSON.parse(jsonValue) as Rule;
+      initFromRule(parsed);
+      setJsonError(null);
+      setMode('form');
+    } catch {
+      setJsonError('JSON 형식이 올바르지 않습니다. 수정 후 다시 시도하세요.');
+    }
+  };
+
+  const handleModeChange = (val: string | number) => {
+    if (val === 'json') switchToJson();
+    else switchToForm();
+  };
+
+  // ── 유효성 검사 ─────────────────────────────────────────────────────────
+  const validate = (rule: Rule): string | null => {
+    if (!rule.ruleId?.trim()) return 'ruleId는 필수입니다.';
+    if (!rule.title?.trim())  return '제목은 필수입니다.';
+    if (isNew && rules.some((r) => r.ruleId === rule.ruleId.trim())) {
+      return `이미 존재하는 ruleId입니다: ${rule.ruleId}`;
+    }
+    return null;
+  };
+
+  // ── 저장 (폼 모드) ───────────────────────────────────────────────────────
+  const handleFormSave = async () => {
+    try {
+      await form.validateFields();
+    } catch {
+      notifyError('저장 실패', '필수 항목을 확인해주세요.');
+      return;
+    }
+
+    const values = form.getFieldsValue(true) as Rule;
+    const rule: Rule = {
+      ...values,
+      keywords,
+      requiredTags,
+      excludeTags,
+      antiPatterns,
+      goodPatterns,
+      metadata: {
+        ...(values.metadata ?? DEFAULT_RULE.metadata),
+        createdAt: isNew
+          ? new Date().toISOString()
+          : (values.metadata?.createdAt ?? new Date().toISOString()),
+      },
+    };
+
+    const err = validate(rule);
+    if (err) { notifyError('저장 실패', err); return; }
+
+    if (isNew) {
+      addRule(rule);
+      notifySuccess('규칙 추가 완료', `${rule.ruleId} 규칙이 추가되었습니다.`);
+      navigate(`/rules/${rule.ruleId}`);
+    } else {
+      updateRule(rule.ruleId, rule);
+      notifySuccess('저장 완료', `${rule.ruleId} 규칙이 저장되었습니다.`);
+    }
+  };
+
+  // ── 저장 (JSON 모드) ─────────────────────────────────────────────────────
+  const handleJsonSave = () => {
+    let parsed: Rule;
+    try {
+      parsed = JSON.parse(jsonValue) as Rule;
+    } catch {
+      setJsonError('JSON 형식이 올바르지 않습니다.');
+      notifyError('저장 실패', 'JSON 파싱 오류');
+      return;
+    }
+
+    const err = validate(parsed);
+    if (err) { setJsonError(err); notifyError('저장 실패', err); return; }
+
+    setJsonError(null);
+    if (isNew) {
+      addRule(parsed);
+      notifySuccess('규칙 추가 완료', `${parsed.ruleId} 규칙이 추가되었습니다.`);
+      navigate(`/rules/${parsed.ruleId}`);
+    } else {
+      updateRule(parsed.ruleId, parsed);
+      notifySuccess('저장 완료', `${parsed.ruleId} 규칙이 저장되었습니다.`);
+    }
+  };
+
+  const handleSave = () => (mode === 'form' ? handleFormSave() : handleJsonSave());
+
+  // ── 태그 입력 헬퍼 ────────────────────────────────────────────────────────
+  const addTag = (
+    val: string,
+    list: string[],
+    setList: (v: string[]) => void,
+    setInput: (v: string) => void,
+  ) => {
+    const trimmed = val.trim();
+    if (trimmed && !list.includes(trimmed)) setList([...list, trimmed]);
+    setInput('');
+  };
+
+  const removeTag = (
+    tag: string,
+    list: string[],
+    setList: (v: string[]) => void,
+  ) => setList(list.filter((t) => t !== tag));
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 렌더
+  // ─────────────────────────────────────────────────────────────────────────
+  return (
+    <div>
+      {/* ── 헤더 ──────────────────────────────────────────────────────────── */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 16,
+          justifyContent: 'space-between',
           marginBottom: 24,
         }}
       >
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/rules')}>
-          목록으로
-        </Button>
-        <Title level={4} style={{ margin: 0 }}>
-          {isNew ? '새 규칙 추가' : `규칙 편집: ${id}`}
-        </Title>
+        <Space>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/rules')}>
+            목록
+          </Button>
+          <Title level={4} style={{ margin: 0 }}>
+            {isNew ? '새 규칙 추가' : `규칙 편집: ${id}`}
+          </Title>
+        </Space>
+
+        <Space>
+          <Segmented
+            value={mode}
+            onChange={handleModeChange}
+            options={[
+              { label: <Space><FormOutlined />폼</Space>,          value: 'form' },
+              { label: <Space><CodeOutlined />JSON 에디터</Space>,  value: 'json' },
+            ]}
+          />
+          <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>
+            저장
+          </Button>
+        </Space>
       </div>
 
-      <Alert
-        type="info"
-        showIcon
-        message="Step 8 구현 예정"
-        description="규칙 폼, JSON 에디터(Monaco), 유효성 검사는 Step 8에서 구현됩니다."
-        style={{ marginBottom: 24 }}
-        closable
-      />
+      {/* ── JSON 에러 알림 ─────────────────────────────────────────────────── */}
+      {jsonError && (
+        <Alert
+          type="error"
+          message={jsonError}
+          closable
+          onClose={() => setJsonError(null)}
+          style={{ marginBottom: 16 }}
+        />
+      )}
 
-      <Card
-        title={
-          <Space>
-            <EditOutlined />
-            {isNew ? '새 규칙' : id}
+      {/* ══════════════════════════════════════════════════════════════════
+          폼 모드
+      ══════════════════════════════════════════════════════════════════ */}
+      {mode === 'form' && (
+        <Form form={form} layout="vertical" style={{ maxWidth: 900 }}>
+
+          {/* ── 기본 정보 ───────────────────────────────────────────────── */}
+          <Card title="기본 정보" style={{ marginBottom: 16 }}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="ruleId"
+                  label="규칙 ID"
+                  rules={[
+                    { required: true, message: 'ruleId는 필수입니다.' },
+                    {
+                      validator: (_, value) => {
+                        if (!isNew) return Promise.resolve();
+                        if (value && rules.some((r) => r.ruleId === value)) {
+                          return Promise.reject('이미 존재하는 ruleId입니다.');
+                        }
+                        return Promise.resolve();
+                      },
+                    },
+                  ]}
+                >
+                  <Input
+                    placeholder="예: G1.ERR.7_3_1"
+                    disabled={!isNew}
+                    style={{ fontFamily: 'monospace' }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="title"
+                  label="제목"
+                  rules={[{ required: true, message: '제목은 필수입니다.' }]}
+                >
+                  <Input placeholder="규칙 제목" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item name="sectionNumber" label="절 번호">
+                  <Input placeholder="예: 7.3.1" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={4}>
+                <Form.Item name="level" label="레벨 (1~4)">
+                  <InputNumber min={1} max={4} style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={6}>
+                <Form.Item name="category" label="카테고리">
+                  <Select>
+                    {(Object.keys(RULE_CATEGORY_LABELS) as RuleCategory[]).map((c) => (
+                      <Option key={c} value={c}>{RULE_CATEGORY_LABELS[c]}</Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={6}>
+                <Form.Item name="severity" label="심각도">
+                  <Select>
+                    {(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as RuleSeverity[]).map((s) => (
+                      <Option key={s} value={s}>
+                        <Tag color={RULE_SEVERITY_COLORS[s]}>{RULE_SEVERITY_LABELS[s]}</Tag>
+                      </Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item name="isActive" label="활성 여부" valuePropName="checked">
+              <Switch checkedChildren="활성" unCheckedChildren="비활성" />
+            </Form.Item>
+          </Card>
+
+          {/* ── 내용 ────────────────────────────────────────────────────── */}
+          <Card title="내용" style={{ marginBottom: 16 }}>
+            <Form.Item name="description" label="설명">
+              <TextArea rows={3} placeholder="규칙 상세 설명 (위험성, 발생 원인)" />
+            </Form.Item>
+            <Form.Item name="message" label="위반 메시지">
+              <TextArea rows={2} placeholder="위반 감지 시 표시할 메시지" />
+            </Form.Item>
+            <Form.Item name="suggestion" label="개선 제안">
+              <TextArea rows={2} placeholder="위반 수정 방법" />
+            </Form.Item>
+
+            <Form.Item label="키워드">
+              <Space wrap style={{ marginBottom: 8 }}>
+                {keywords.map((kw) => (
+                  <Tag
+                    key={kw}
+                    closable
+                    onClose={() => removeTag(kw, keywords, setKeywords)}
+                  >
+                    {kw}
+                  </Tag>
+                ))}
+              </Space>
+              <Input
+                value={kwInput}
+                onChange={(e) => setKwInput(e.target.value)}
+                onPressEnter={() => addTag(kwInput, keywords, setKeywords, setKwInput)}
+                placeholder="키워드 입력 후 Enter"
+                style={{ maxWidth: 240 }}
+                suffix={
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<PlusOutlined />}
+                    onClick={() => addTag(kwInput, keywords, setKeywords, setKwInput)}
+                  />
+                }
+              />
+            </Form.Item>
+          </Card>
+
+          {/* ── 출처 ────────────────────────────────────────────────────── */}
+          <Card title="출처" style={{ marginBottom: 16 }}>
+            <Row gutter={16}>
+              <Col xs={24} sm={8}>
+                <Form.Item name="sourcePrefix" label="소스 접두어">
+                  <Input placeholder="예: G1" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item name="sourceFile" label="출처 파일">
+                  <Input placeholder="예: guideline_1.docx" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item name="source" label="출처 참조">
+                  <Input placeholder="예: guideline:7.3.1" />
+                </Form.Item>
+              </Col>
+            </Row>
+          </Card>
+
+          {/* ── 코드 예시 ───────────────────────────────────────────────── */}
+          <Card title="코드 예시" style={{ marginBottom: 16 }}>
+            <Form.Item name="problematicCode" label="위반 코드 예시">
+              <TextArea
+                rows={5}
+                placeholder="위반 패턴 Java 코드"
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+            </Form.Item>
+            <Form.Item name="fixedCode" label="수정된 코드 예시">
+              <TextArea
+                rows={5}
+                placeholder="올바른 구현 Java 코드"
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+            </Form.Item>
+          </Card>
+
+          {/* ── 태그 / 검사 설정 ────────────────────────────────────────── */}
+          <Card title="태그 / 검사 설정" style={{ marginBottom: 16 }}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Form.Item name="checkType" label="검사 타입">
+                  <Select>
+                    {(Object.keys(RULE_CHECK_TYPE_LABELS) as RuleCheckType[]).map((t) => (
+                      <Option key={t} value={t}>{RULE_CHECK_TYPE_LABELS[t]}</Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item name="tagCondition" label="태그 조건 표현식">
+                  <Input
+                    placeholder="예: (IS_SERVICE || IS_CONTROLLER)"
+                    style={{ fontFamily: 'monospace' }}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item name="checkTypeReason" label="검사 타입 선택 이유">
+              <TextArea rows={2} placeholder="checkType 선택 근거" />
+            </Form.Item>
+
+            <Form.Item label="필수 태그 (requiredTags)">
+              <Space wrap style={{ marginBottom: 8 }}>
+                {requiredTags.map((t) => (
+                  <Tag
+                    key={t}
+                    color="blue"
+                    closable
+                    onClose={() => removeTag(t, requiredTags, setRequiredTags)}
+                  >
+                    {t}
+                  </Tag>
+                ))}
+              </Space>
+              <Input
+                value={reqInput}
+                onChange={(e) => setReqInput(e.target.value)}
+                onPressEnter={() =>
+                  addTag(reqInput, requiredTags, setRequiredTags, setReqInput)
+                }
+                placeholder="태그 이름 입력 후 Enter  예: IS_SERVICE"
+                style={{ maxWidth: 300, fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+
+            <Form.Item label="제외 태그 (excludeTags)">
+              <Space wrap style={{ marginBottom: 8 }}>
+                {excludeTags.map((t) => (
+                  <Tag
+                    key={t}
+                    color="orange"
+                    closable
+                    onClose={() => removeTag(t, excludeTags, setExcludeTags)}
+                  >
+                    {t}
+                  </Tag>
+                ))}
+              </Space>
+              <Input
+                value={excInput}
+                onChange={(e) => setExcInput(e.target.value)}
+                onPressEnter={() =>
+                  addTag(excInput, excludeTags, setExcludeTags, setExcInput)
+                }
+                placeholder="태그 이름 입력 후 Enter  예: USES_PREPARED_STATEMENT"
+                style={{ maxWidth: 300, fontFamily: 'monospace' }}
+              />
+            </Form.Item>
+          </Card>
+
+          {/* ── 패턴 ────────────────────────────────────────────────────── */}
+          <Card title="패턴" style={{ marginBottom: 16 }}>
+            <Divider orientation={LEFT} orientationMargin={0}>
+              <Text type="danger" style={{ fontSize: 13 }}>
+                안티패턴 (위반 탐지)
+              </Text>
+            </Divider>
+            <PatternEditor
+              label="안티패턴"
+              value={antiPatterns}
+              onChange={setAntiPatterns}
+            />
+
+            <Divider orientation={LEFT} orientationMargin={0} style={{ marginTop: 24 }}>
+              <Text type="success" style={{ fontSize: 13 }}>
+                굿패턴 (올바른 구현)
+              </Text>
+            </Divider>
+            <PatternEditor
+              label="굿패턴"
+              value={goodPatterns}
+              onChange={setGoodPatterns}
+            />
+          </Card>
+
+          {/* ── 하단 저장/취소 ──────────────────────────────────────────── */}
+          <Space style={{ marginBottom: 32 }}>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleFormSave}>
+              저장
+            </Button>
+            <Popconfirm
+              title="변경사항을 취소하시겠습니까?"
+              onConfirm={() => navigate('/rules')}
+              okText="취소"
+              cancelText="계속 편집"
+            >
+              <Button>취소</Button>
+            </Popconfirm>
           </Space>
-        }
-      >
-        {isNew ? (
-          <Text type="secondary">새 규칙을 추가합니다. (Step 8 구현 예정)</Text>
-        ) : (
-          <Descriptions column={1} bordered>
-            <Descriptions.Item label="규칙 ID">
-              <Text code>{id}</Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="상태">
-              Step 8에서 실제 데이터와 연동 예정
-            </Descriptions.Item>
-          </Descriptions>
-        )}
-      </Card>
+        </Form>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          JSON 에디터 모드
+      ══════════════════════════════════════════════════════════════════ */}
+      {mode === 'json' && (
+        <div>
+          <Alert
+            type="info"
+            showIcon
+            message="JSON 에디터 모드"
+            description="Rule 전체 구조를 JSON으로 직접 편집합니다. 저장 버튼을 누르면 유효성 검사 후 스토어에 반영됩니다."
+            closable
+            style={{ marginBottom: 12 }}
+          />
+          <div
+            style={{
+              border: '1px solid #d9d9d9',
+              borderRadius: 6,
+              overflow: 'hidden',
+            }}
+          >
+            <Editor
+              height="70vh"
+              language="json"
+              value={jsonValue}
+              onChange={(v) => setJsonValue(v ?? '')}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 13,
+                tabSize: 2,
+                wordWrap: 'on',
+                formatOnPaste: true,
+                scrollBeyondLastLine: false,
+              }}
+              theme="vs"
+            />
+          </div>
+          <Space style={{ marginTop: 12, marginBottom: 32 }}>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleJsonSave}>
+              저장
+            </Button>
+            <Button icon={<FormOutlined />} onClick={switchToForm}>
+              폼 모드로 전환
+            </Button>
+            <Popconfirm
+              title="변경사항을 취소하시겠습니까?"
+              onConfirm={() => navigate('/rules')}
+              okText="취소"
+              cancelText="계속 편집"
+            >
+              <Button>취소</Button>
+            </Popconfirm>
+          </Space>
+        </div>
+      )}
     </div>
   );
 }
