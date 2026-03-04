@@ -26,7 +26,7 @@ export default function OfflineBanner() {
       showIcon
       icon={<DisconnectOutlined />}
       banner
-      message={
+      title={
         <span>
           <strong>오프라인 모드</strong>
           &nbsp;—&nbsp;서버에 연결할 수 없습니다.
