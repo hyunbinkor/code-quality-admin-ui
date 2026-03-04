@@ -6,9 +6,9 @@
  *   - /api/data/stats 통계 위젯 (규칙 수, 태그 수, 카테고리 분포)
  *   - 마지막 Pull / Push 시각 (dataStore에서 읽기)
  *
- * [Fix] antd v6 deprecated API 수정
- *   - Statistic: valueStyle → styles={{ content: { ... } }}
- *   - Alert: message → title
+ * Step 13 변경:
+ *   - usePollHealth() 제거 → App.tsx(AppInner)에서 앱 전체 수명 동안 유지
+ *     (페이지 이탈 시 폴링이 끊기는 문제 해결)
  */
 import { useEffect, useState, useCallback } from 'react';
 import {
@@ -60,6 +60,8 @@ function formatDateTime(iso: string | null): string {
 }
 
 export default function DashboardPage() {
+  // ⚠️ usePollHealth()는 App.tsx(AppInner)에서 호출 — 여기서 제거됨
+
   const lastPullAt  = useDataStore((s) => s.lastPullAt);
   const lastPushAt  = useDataStore((s) => s.lastPushAt);
   const rules       = useDataStore((s) => s.rules);
@@ -99,15 +101,30 @@ export default function DashboardPage() {
   return (
     <div>
       {/* ── 타이틀 ───────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+      <div
+        style={{
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'space-between',
+          marginBottom:   24,
+        }}
+      >
         <Title level={4} style={{ margin: 0 }}>대시보드</Title>
-        <Button icon={<ReloadOutlined />} onClick={fetchStats} loading={statsLoading}>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={fetchStats}
+          loading={statsLoading}
+        >
           통계 새로고침
         </Button>
       </div>
 
       {/* ── 서버 연결 상태 ───────────────────────────────────────────────── */}
-      <Card title={<Space><ApiOutlined />서버 연결 상태</Space>} size="small" style={{ marginBottom: 24 }}>
+      <Card
+        title={<Space><ApiOutlined />서버 연결 상태</Space>}
+        size="small"
+        style={{ marginBottom: 24 }}
+      >
         <Space size={16}>
           <ServerStatus />
           <Text type="secondary" style={{ fontSize: 12 }}>
@@ -138,7 +155,7 @@ export default function DashboardPage() {
                 value={stats?.rules.count ?? (totalRules || '—')}
                 prefix={<FileTextOutlined />}
                 suffix={stats || totalRules > 0 ? '개' : ''}
-                styles={{ content: { color: '#1677ff' } }}
+                styles={{ content: { color: '#1677ff' }}}
               />
               {!stats && totalRules > 0 && (
                 <Text type="secondary" style={{ fontSize: 11 }}>로컬 기준</Text>
@@ -153,7 +170,7 @@ export default function DashboardPage() {
                 value={totalRules > 0 ? activeRules : '—'}
                 prefix={<FileTextOutlined />}
                 suffix={totalRules > 0 ? '개' : ''}
-                styles={{ content: { color: '#52c41a' } }}
+                styles={{ content: { color: '#52c41a' }}}
               />
               {totalRules > 0 && (
                 <Progress
@@ -173,7 +190,7 @@ export default function DashboardPage() {
                 value={stats?.tags.count ?? '—'}
                 prefix={<TagsOutlined />}
                 suffix={stats ? '개' : ''}
-                styles={{ content: { color: '#722ed1' } }}
+                styles={{ content: { color: '#722ed1' }}}
               />
               {stats && (
                 <Text type="secondary" style={{ fontSize: 12 }}>
@@ -190,7 +207,7 @@ export default function DashboardPage() {
                 value={stats?.tags.categories.length ?? '—'}
                 prefix={<AppstoreOutlined />}
                 suffix={stats ? '개' : ''}
-                styles={{ content: { color: '#fa8c16' } }}
+                styles={{ content: { color: '#fa8c16' }}}
               />
             </Card>
           </Col>
@@ -215,7 +232,9 @@ export default function DashboardPage() {
               .sort(([, a], [, b]) => b - a)
               .map(([cat, count], idx) => (
                 <Col key={cat} xs={24} sm={12} lg={8}>
-                  <Tooltip title={`${RULE_CATEGORY_LABELS[cat as keyof typeof RULE_CATEGORY_LABELS] ?? cat}: ${count}개`}>
+                  <Tooltip
+                    title={`${RULE_CATEGORY_LABELS[cat as keyof typeof RULE_CATEGORY_LABELS] ?? cat}: ${count}개`}
+                  >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Text style={{ fontSize: 12, width: 160, flexShrink: 0 }} ellipsis>
                         {RULE_CATEGORY_LABELS[cat as keyof typeof RULE_CATEGORY_LABELS] ?? cat}
@@ -242,19 +261,23 @@ export default function DashboardPage() {
             <Statistic
               title="마지막 Pull"
               value={formatDateTime(lastPullAt)}
-              styles={{ content: { fontSize: 15, color: lastPullAt ? '#1677ff' : '#bfbfbf' } }}
+              styles={{ content: { fontSize: 15, color: lastPullAt ? '#1677ff' : '#bfbfbf' }}}
             />
+
             <Divider style={{ margin: '16px 0' }} />
+
             <Statistic
               title="마지막 Push"
               value={formatDateTime(lastPushAt)}
-              styles={{ content: { fontSize: 15, color: lastPushAt ? '#52c41a' : '#bfbfbf' } }}
+              styles={{ content: { fontSize: 15, color: lastPushAt ? '#52c41a' : '#bfbfbf' }}}
             />
+
             <Divider style={{ margin: '16px 0' }} />
+
             <Statistic
               title="로컬 데이터"
               value={totalRules > 0 ? `규칙 ${totalRules}개 로드됨` : 'Pull이 필요합니다'}
-              styles={{ content: { fontSize: 15, color: totalRules > 0 ? '#52c41a' : '#bfbfbf' } }}
+              styles={{ content: { fontSize: 15, color: totalRules > 0 ? '#52c41a' : '#bfbfbf' }}}
             />
           </Card>
         </Col>
