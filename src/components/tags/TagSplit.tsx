@@ -233,7 +233,7 @@ export default function TagSplit({ open, onClose }: TagSplitProps) {
       onCancel={handleClose}
       width={820}
       footer={null}
-      destroyOnClose
+      destroyOnHidden
     >
       <Steps
         current={step}
@@ -277,7 +277,7 @@ export default function TagSplit({ open, onClose }: TagSplitProps) {
             <Alert
               type="info"
               showIcon
-              message={`"${sourceTag}" 태그를 참조하는 규칙: ${affectedRules.length}개`}
+              title={`"${sourceTag}" 태그를 참조하는 규칙: ${affectedRules.length}개`}
               description={
                 affectedRules.length > 0
                   ? affectedRules.map((r) => r.ruleId).join(', ')
@@ -307,7 +307,7 @@ export default function TagSplit({ open, onClose }: TagSplitProps) {
           <Alert
             type="warning"
             showIcon
-            message={`원본 태그 "${sourceTag}"은(는) 분할 후 삭제됩니다. 태그A가 규칙 참조를 대체합니다.`}
+            title={`원본 태그 "${sourceTag}"은(는) 분할 후 삭제됩니다. 태그A가 규칙 참조를 대체합니다.`}
             style={{ marginBottom: 16 }}
           />
 
@@ -419,7 +419,7 @@ export default function TagSplit({ open, onClose }: TagSplitProps) {
             <Alert
               type="info"
               showIcon
-              message="이 태그를 참조하는 규칙이 없습니다. 태그만 분할됩니다."
+              title="이 태그를 참조하는 규칙이 없습니다. 태그만 분할됩니다."
             />
           )}
 

@@ -152,7 +152,7 @@ function RuleDiffSection({ rules }: RuleDiffSectionProps) {
         <Alert
           type="success"
           showIcon
-          message="규칙 변경사항 없음"
+          title="규칙 변경사항 없음"
           description={`${summary.unchangedCount}개 규칙 모두 서버와 동일합니다.`}
         />
       )}
@@ -268,7 +268,7 @@ function TagDiffSection({ tags }: TagDiffSectionProps) {
         <Alert
           type="success"
           showIcon
-          message="태그 변경사항 없음"
+          title="태그 변경사항 없음"
           description={`${summary.unchangedCount}개 태그 모두 서버와 동일합니다.`}
         />
       )}
@@ -412,7 +412,7 @@ export default function DiffViewer({ diff }: DiffViewerProps) {
           type="warning"
           showIcon
           icon={<WarningOutlined />}
-          message="버전 충돌 감지"
+          title="버전 충돌 감지"
           description={
             <span>
               내 기준 버전({diff.baseVersion})이 서버 현재 버전({diff.currentVersion})보다 낮습니다.
@@ -430,7 +430,7 @@ export default function DiffViewer({ diff }: DiffViewerProps) {
         <Alert
           type="success"
           showIcon
-          message="서버와 동일합니다"
+          title="서버와 동일합니다"
           description="로컬 데이터가 서버와 완전히 일치합니다. Push가 필요하지 않습니다."
           style={{ marginBottom: 16 }}
         />
@@ -438,7 +438,7 @@ export default function DiffViewer({ diff }: DiffViewerProps) {
         <Alert
           type="info"
           showIcon
-          message={`총 ${totalChanges}개 항목에 변경사항이 있습니다.`}
+          title={`총 ${totalChanges}개 항목에 변경사항이 있습니다.`}
           description={
             <Space size={16} wrap>
               <span>

@@ -73,7 +73,7 @@ function DiffSummary({ diff }: { diff: DiffResponse }) {
         type="success"
         showIcon
         icon={<CheckCircleOutlined />}
-        message="변경사항 없음"
+        title="변경사항 없음"
         description="서버와 완전히 동일합니다. Push가 필요하지 않습니다."
         style={{ marginBottom: 12 }}
       />
@@ -215,7 +215,7 @@ export default function PushConfirm({
         type="success"
         showIcon
         icon={<CheckCircleOutlined />}
-        message="Push 완료"
+        title="Push 완료"
         description="로컬 데이터가 서버에 성공적으로 업로드되었습니다."
         style={{ marginBottom: 16 }}
       />
@@ -226,14 +226,14 @@ export default function PushConfirm({
               <Statistic
                 title="새 버전 (newVersion)"
                 value={successInfo.newVersion}
-                valueStyle={{ fontSize: 13, fontFamily: 'monospace' }}
+                styles={{ content: { fontSize: 13, fontFamily: 'monospace' }}}
               />
             </Col>
             <Col span={12}>
               <Statistic
                 title="Push 완료 시각"
                 value={new Date(successInfo.pushedAt).toLocaleString('ko-KR')}
-                valueStyle={{ fontSize: 12 }}
+                styles={{ content: { fontSize: 12 }}}
               />
             </Col>
             <Col span={12}>
@@ -269,7 +269,7 @@ export default function PushConfirm({
         type="warning"
         showIcon
         icon={<WarningOutlined />}
-        message="버전 충돌 (VERSION_CONFLICT)"
+        title="버전 충돌 (VERSION_CONFLICT)"
         description={
           <div>
             <Text>서버 데이터가 변경되었습니다. Push 이후 다른 사람이 서버를 수정했거나, Pull 없이 오랜 시간이 지났습니다.</Text>
@@ -330,7 +330,7 @@ export default function PushConfirm({
       <Alert
         type="error"
         showIcon
-        message="Push 실패"
+        title="Push 실패"
         description={errorMessage}
         style={{ marginBottom: 16 }}
       />
@@ -350,7 +350,7 @@ export default function PushConfirm({
       <Alert
         type="info"
         showIcon
-        message="Push 전 확인"
+        title="Push 전 확인"
         description="로컬 데이터를 서버에 업로드합니다. 서버의 기존 데이터는 자동 백업됩니다."
         style={{ marginBottom: 16 }}
       />
@@ -363,7 +363,7 @@ export default function PushConfirm({
               title="업로드 규칙 수"
               value={ruleCount}
               suffix="개"
-              valueStyle={{ fontSize: 20 }}
+              styles={{ content: { fontSize: 20 }}}
             />
           </Col>
           <Col span={8}>
@@ -371,14 +371,14 @@ export default function PushConfirm({
               title="업로드 태그 수"
               value={tagCount}
               suffix="개"
-              valueStyle={{ fontSize: 20 }}
+              styles={{ content: { fontSize: 20 }}}
             />
           </Col>
           <Col span={8}>
             <Statistic
               title="기준 버전"
               value={baseVersion ?? '-'}
-              valueStyle={{ fontSize: 14, fontFamily: 'monospace' }}
+              styles={{ content: { fontSize: 14, fontFamily: 'monospace' }}}
             />
           </Col>
         </Row>
@@ -391,7 +391,7 @@ export default function PushConfirm({
         <Alert
           type="warning"
           showIcon
-          message="Diff 결과가 없습니다."
+          title="Diff 결과가 없습니다."
           description="Diff를 먼저 실행하면 변경사항을 확인하고 Push할 수 있습니다. 그냥 Push하면 로컬 전체 데이터가 업로드됩니다."
           style={{ marginBottom: 12 }}
         />
@@ -456,7 +456,7 @@ export default function PushConfirm({
       maskClosable={phase !== 'pushing'}
       footer={renderFooter()}
       width={560}
-      destroyOnClose={false}
+      destroyOnHidden={false}
     >
       {phase === 'confirm'  && renderConfirm()}
       {phase === 'pushing'  && renderPushing()}

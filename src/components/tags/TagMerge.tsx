@@ -221,7 +221,7 @@ export default function TagMerge({ open, onClose }: TagMergeProps) {
       onCancel={handleClose}
       width={820}
       footer={null}
-      destroyOnClose
+      destroyOnHidden
     >
       <Steps
         current={step}
@@ -240,7 +240,7 @@ export default function TagMerge({ open, onClose }: TagMergeProps) {
           <Alert
             type="info"
             showIcon
-            message="2개 이상의 태그를 선택하면 하나로 병합합니다. 원본 태그들은 삭제됩니다."
+            title="2개 이상의 태그를 선택하면 하나로 병합합니다. 원본 태그들은 삭제됩니다."
             style={{ marginBottom: 16 }}
           />
 
@@ -285,7 +285,7 @@ export default function TagMerge({ open, onClose }: TagMergeProps) {
             <Alert
               type="warning"
               showIcon
-              message={`선택된 ${selectedTags.length}개 태그를 참조하는 규칙: ${affectedRules.length}개`}
+              title={`선택된 ${selectedTags.length}개 태그를 참조하는 규칙: ${affectedRules.length}개`}
               description={affectedRules.map((r) => r.ruleId).join(', ') || '없음'}
               style={{ marginTop: 12 }}
             />
@@ -406,7 +406,7 @@ export default function TagMerge({ open, onClose }: TagMergeProps) {
             <Alert
               type="info"
               showIcon
-              message="영향받는 규칙이 없습니다. 태그만 병합됩니다."
+              title="영향받는 규칙이 없습니다. 태그만 병합됩니다."
             />
           )}
 

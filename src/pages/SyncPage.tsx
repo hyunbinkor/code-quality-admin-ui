@@ -121,25 +121,25 @@ export default function SyncPage() {
             <Statistic
               title="baseVersion"
               value={baseVersion ?? '없음 (Pull 필요)'}
-              valueStyle={{
+              styles={{ content: {
                 fontSize: 13,
                 fontFamily: 'monospace',
                 color: hasPullData ? undefined : '#bfbfbf',
-              }}
+              }}}
             />
           </Col>
           <Col xs={24} sm={8}>
             <Statistic
               title={<Space><ClockCircleOutlined />마지막 Pull</Space>}
               value={formatDateTime(lastPullAt)}
-              valueStyle={{ fontSize: 13, color: lastPullAt ? '#1677ff' : '#bfbfbf' }}
+              styles={{ content: { fontSize: 13, color: lastPullAt ? '#1677ff' : '#bfbfbf' }}}
             />
           </Col>
           <Col xs={24} sm={8}>
             <Statistic
               title={<Space><ClockCircleOutlined />마지막 Push</Space>}
               value={formatDateTime(lastPushAt)}
-              valueStyle={{ fontSize: 13, color: lastPushAt ? '#52c41a' : '#bfbfbf' }}
+              styles={{ content: { fontSize: 13, color: lastPushAt ? '#52c41a' : '#bfbfbf' }}}
             />
           </Col>
         </Row>
@@ -246,7 +246,7 @@ export default function SyncPage() {
         <Alert
           type="info"
           showIcon
-          message="Pull이 필요합니다"
+          title="Pull이 필요합니다"
           description="Diff / Push를 실행하려면 먼저 Pull을 실행하여 서버 데이터를 가져오세요."
           style={{ marginBottom: 16 }}
         />
@@ -257,7 +257,7 @@ export default function SyncPage() {
         <Alert
           type="error"
           showIcon
-          message="Diff 요청 실패"
+          title="Diff 요청 실패"
           description={diffError}
           closable
           onClose={() => setDiffError(null)}

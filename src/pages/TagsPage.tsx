@@ -162,7 +162,7 @@ function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagMod
       okText="저장"
       cancelText="취소"
       width={600}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical" initialValues={getInitialValues()}>
         {isNew && (
@@ -313,7 +313,7 @@ function CompoundTagModal({ open, tagName, initial, onOk, onCancel }: CompoundTa
       okText="저장"
       cancelText="취소"
       width={520}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical" initialValues={getInitialValues()}>
         {isNew && (
@@ -396,7 +396,7 @@ function CategoryModal({ open, catId, initial, onOk, onCancel }: CategoryModalPr
       okText="저장"
       cancelText="취소"
       width={400}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form
         form={form}

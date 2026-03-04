@@ -476,7 +476,7 @@ export default function RuleEditPage() {
         <Alert
           type="warning"
           showIcon
-          message="Pull 데이터 없음"
+          title="Pull 데이터 없음"
           description="로컬에 서버 데이터가 없습니다. 규칙을 추가할 수 있지만, 서버에 반영하려면 나중에 Pull → Push 순서로 진행하세요."
           closable
           style={{ marginBottom: 16 }}
@@ -487,7 +487,7 @@ export default function RuleEditPage() {
       {jsonError && (
         <Alert
           type="error"
-          message={jsonError}
+          title={jsonError}
           closable
           onClose={() => setJsonError(null)}
           style={{ marginBottom: 16 }}
