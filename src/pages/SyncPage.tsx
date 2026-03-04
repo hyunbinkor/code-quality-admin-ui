@@ -1,164 +1,272 @@
 /**
- * SyncPage.tsx
+ * src/pages/SyncPage.tsx
+ *
  * 데이터 동기화 페이지.
- * - Pull: 서버 전체 데이터 다운로드 — Step 5에서 구현
- * - Diff: 변경사항 미리보기 — Step 11에서 구현
- * - Push: 서버 업로드 + 버전 충돌 처리 — Step 12에서 구현
- * - 오프라인 편집 지원 — Step 13에서 구현
+ * - Pull  : 서버 → 로컬 (dataStore.pull)
+ * - Diff  : 로컬 vs 서버 비교 → DiffViewer 렌더링
+ * - Push  : 로컬 → 서버 (Step 12에서 충돌 처리 추가)
  */
+import { useState } from 'react';
 import {
   Button,
   Card,
-  Col,
-  Row,
-  Steps,
+  Space,
   Typography,
   Alert,
-  Space,
-  Statistic,
+  Spin,
   Divider,
+  Row,
+  Col,
+  Statistic,
+  Tag,
 } from 'antd';
 import {
   CloudDownloadOutlined,
   DiffOutlined,
   CloudUploadOutlined,
-  CheckCircleOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons';
+import { useDataStore } from '@/stores/dataStore';
+import { useUiStore } from '@/stores/uiStore';
+import { diffData } from '@/api/dataApi';
+import DiffViewer from '@/components/sync/DiffViewer';
+import type { DiffResponse } from '@/types/api';
 
 const { Title, Text } = Typography;
 
+function formatDateTime(iso: string | null): string {
+  if (!iso) return '없음';
+  return new Date(iso).toLocaleString('ko-KR', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
 export default function SyncPage() {
+  const rules        = useDataStore((s) => s.rules);
+  const tags         = useDataStore((s) => s.tags);
+  const baseVersion  = useDataStore((s) => s.baseVersion);
+  const lastPullAt   = useDataStore((s) => s.lastPullAt);
+  const lastPushAt   = useDataStore((s) => s.lastPushAt);
+  const isLoading    = useDataStore((s) => s.isLoading);
+  const pull         = useDataStore((s) => s.pull);
+  const notifySuccess = useUiStore((s) => s.notifySuccess);
+  const notifyError   = useUiStore((s) => s.notifyError);
+
+  const [diffResult, setDiffResult]   = useState<DiffResponse | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffError, setDiffError]     = useState<string | null>(null);
+
+  // ── Pull ──────────────────────────────────────────────────────────────────
+  const handlePull = async () => {
+    try {
+      await pull();
+      setDiffResult(null); // Pull 후 이전 Diff 결과 초기화
+      notifySuccess('Pull 완료', '서버에서 최신 데이터를 불러왔습니다.');
+    } catch (err) {
+      notifyError('Pull 실패', err instanceof Error ? err.message : undefined);
+    }
+  };
+
+  // ── Diff ──────────────────────────────────────────────────────────────────
+  const handleDiff = async () => {
+    if (baseVersion === null) {
+      notifyError('Diff 실패', 'Pull을 먼저 실행하여 baseVersion을 가져오세요.');
+      return;
+    }
+
+    setDiffLoading(true);
+    setDiffError(null);
+
+    try {
+      const result = await diffData({ baseVersion, rules, tags });
+      setDiffResult(result);
+      notifySuccess('Diff 완료', '서버와의 변경사항 비교가 완료되었습니다.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Diff 요청 실패';
+      setDiffError(message);
+      notifyError('Diff 실패', message);
+    } finally {
+      setDiffLoading(false);
+    }
+  };
+
+  // ── Push (Step 12에서 구현) ────────────────────────────────────────────────
+  const handlePush = () => {
+    notifyError('Push', 'Step 12에서 구현됩니다.');
+  };
+
+  const hasPullData = baseVersion !== null;
+
   return (
     <div>
-      <Title level={4} style={{ marginTop: 0, marginBottom: 24 }}>
-        데이터 동기화
-      </Title>
+      {/* ── 타이틀 ───────────────────────────────────────────────────────── */}
+      <Title level={4} style={{ marginBottom: 24 }}>데이터 동기화</Title>
 
-      <Alert
-        type="info"
-        showIcon
-        message="Step 5, 11, 12, 13 구현 예정"
-        description="Pull/Diff/Push 기능은 각 스텝에서 순차적으로 구현됩니다. 현재는 UI 레이아웃만 확인할 수 있습니다."
-        style={{ marginBottom: 24 }}
-        closable
-      />
+      {/* ── 현재 상태 카드 ───────────────────────────────────────────────── */}
+      <Card style={{ marginBottom: 24 }}>
+        <Row gutter={[24, 16]}>
+          <Col xs={24} sm={8}>
+            <Statistic
+              title="baseVersion"
+              value={baseVersion ?? '없음 (Pull 필요)'}
+              valueStyle={{
+                fontSize: 14,
+                fontFamily: 'monospace',
+                color: hasPullData ? undefined : '#bfbfbf',
+              }}
+            />
+          </Col>
+          <Col xs={24} sm={8}>
+            <Statistic
+              title={<Space><ClockCircleOutlined />마지막 Pull</Space>}
+              value={formatDateTime(lastPullAt)}
+              valueStyle={{ fontSize: 14, color: lastPullAt ? '#1677ff' : '#bfbfbf' }}
+            />
+          </Col>
+          <Col xs={24} sm={8}>
+            <Statistic
+              title={<Space><ClockCircleOutlined />마지막 Push</Space>}
+              value={formatDateTime(lastPushAt)}
+              valueStyle={{ fontSize: 14, color: lastPushAt ? '#52c41a' : '#bfbfbf' }}
+            />
+          </Col>
+        </Row>
 
-      {/* 워크플로우 안내 */}
-      <Card title="동기화 워크플로우" style={{ marginBottom: 24 }}>
-        <Steps
-          items={[
-            {
-              title: 'Pull',
-              description: '서버 데이터 다운로드',
-              icon: <CloudDownloadOutlined />,
-              status: 'wait',
-            },
-            {
-              title: '로컬 편집',
-              description: '규칙/태그 수정',
-              icon: <DiffOutlined />,
-              status: 'wait',
-            },
-            {
-              title: 'Diff',
-              description: '변경사항 확인',
-              icon: <DiffOutlined />,
-              status: 'wait',
-            },
-            {
-              title: 'Push',
-              description: '서버 업로드',
-              icon: <CloudUploadOutlined />,
-              status: 'wait',
-            },
-            {
-              title: '완료',
-              icon: <CheckCircleOutlined />,
-              status: 'wait',
-            },
-          ]}
-        />
-      </Card>
+        <Divider style={{ margin: '16px 0' }} />
 
-      {/* 액션 버튼 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={8}>
-          <Card
-            title={
-              <Space>
-                <CloudDownloadOutlined style={{ color: '#1677ff' }} />
-                Pull
-              </Space>
-            }
-          >
-            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-              서버에서 최신 규칙과 태그 데이터를 다운로드합니다.
-              기존 로컬 데이터는 IndexedDB에 백업됩니다.
-            </Text>
-            <Statistic title="마지막 Pull" value="—" style={{ marginBottom: 16 }} />
-            <Button type="primary" icon={<CloudDownloadOutlined />} block disabled>
-              Pull 실행 (Step 5)
-            </Button>
-          </Card>
-        </Col>
-
-        <Col xs={24} md={8}>
-          <Card
-            title={
-              <Space>
-                <DiffOutlined style={{ color: '#722ed1' }} />
-                Diff
-              </Space>
-            }
-          >
-            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-              로컬 수정 내용과 서버 데이터를 비교합니다.
-              추가/수정/삭제 항목을 미리 확인할 수 있습니다.
-            </Text>
-            <Statistic title="변경사항" value="—" style={{ marginBottom: 16 }} />
-            <Button icon={<DiffOutlined />} block disabled>
-              Diff 확인 (Step 11)
-            </Button>
-          </Card>
-        </Col>
-
-        <Col xs={24} md={8}>
-          <Card
-            title={
-              <Space>
-                <CloudUploadOutlined style={{ color: '#52c41a' }} />
-                Push
-              </Space>
-            }
-          >
-            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-              로컬 데이터를 서버에 업로드합니다.
-              Push 전 자동 백업이 생성됩니다.
-            </Text>
-            <Statistic title="마지막 Push" value="—" style={{ marginBottom: 16 }} />
-            <Button icon={<CloudUploadOutlined />} block disabled>
-              Push 실행 (Step 12)
-            </Button>
-          </Card>
-        </Col>
-      </Row>
-
-      <Divider />
-
-      {/* 버전 정보 */}
-      <Card title="버전 정보" size="small">
         <Row gutter={16}>
-          <Col span={8}>
-            <Statistic title="Base Version" value="—" />
-          </Col>
-          <Col span={8}>
-            <Statistic title="현재 서버 버전" value="—" />
-          </Col>
-          <Col span={8}>
-            <Statistic title="충돌 여부" value="—" />
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>로컬 데이터: </Text>
+            <Tag color="blue">{rules.length}개 규칙</Tag>
+            <Tag color="purple">{Object.keys(tags.tags).length}개 태그</Tag>
+            <Tag color="cyan">{Object.keys(tags.compoundTags).length}개 복합 태그</Tag>
           </Col>
         </Row>
       </Card>
+
+      {/* ── 액션 버튼 ────────────────────────────────────────────────────── */}
+      <Card
+        title="동기화 작업"
+        style={{ marginBottom: 24 }}
+      >
+        <Row gutter={[16, 16]} align="middle">
+          {/* Pull */}
+          <Col xs={24} sm={8}>
+            <Card
+              size="small"
+              style={{ textAlign: 'center', background: '#e6f4ff', border: '1px solid #91caff' }}
+            >
+              <Space direction="vertical" size={8}>
+                <CloudDownloadOutlined style={{ fontSize: 28, color: '#1677ff' }} />
+                <Text strong>Pull</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  서버 데이터를 로컬로 가져옵니다.
+                  <br />기존 로컬 편집이 덮어씌워집니다.
+                </Text>
+                <Button
+                  type="primary"
+                  icon={<CloudDownloadOutlined />}
+                  onClick={handlePull}
+                  loading={isLoading}
+                  block
+                >
+                  Pull 실행
+                </Button>
+              </Space>
+            </Card>
+          </Col>
+
+          {/* Diff */}
+          <Col xs={24} sm={8}>
+            <Card
+              size="small"
+              style={{ textAlign: 'center', background: '#fffbe6', border: '1px solid #ffe58f' }}
+            >
+              <Space direction="vertical" size={8}>
+                <DiffOutlined style={{ fontSize: 28, color: '#d48806' }} />
+                <Text strong>Diff</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  로컬 편집본과 서버를 비교합니다.
+                  <br />Push 전에 변경사항을 확인하세요.
+                </Text>
+                <Button
+                  icon={<DiffOutlined />}
+                  onClick={handleDiff}
+                  loading={diffLoading}
+                  disabled={!hasPullData}
+                  block
+                >
+                  Diff 실행
+                </Button>
+              </Space>
+            </Card>
+          </Col>
+
+          {/* Push */}
+          <Col xs={24} sm={8}>
+            <Card
+              size="small"
+              style={{ textAlign: 'center', background: '#f6ffed', border: '1px solid #b7eb8f' }}
+            >
+              <Space direction="vertical" size={8}>
+                <CloudUploadOutlined style={{ fontSize: 28, color: '#52c41a' }} />
+                <Text strong>Push</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  로컬 데이터를 서버에 업로드합니다.
+                  <br />Step 12에서 충돌 처리가 추가됩니다.
+                </Text>
+                <Button
+                  type="primary"
+                  icon={<CloudUploadOutlined />}
+                  onClick={handlePush}
+                  disabled={!hasPullData}
+                  style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                  block
+                >
+                  Push 실행
+                </Button>
+              </Space>
+            </Card>
+          </Col>
+        </Row>
+      </Card>
+
+      {/* ── Diff 에러 ────────────────────────────────────────────────────── */}
+      {diffError && (
+        <Alert
+          type="error"
+          showIcon
+          message="Diff 요청 실패"
+          description={diffError}
+          closable
+          onClose={() => setDiffError(null)}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
+      {/* ── Pull 안내 ────────────────────────────────────────────────────── */}
+      {!hasPullData && (
+        <Alert
+          type="info"
+          showIcon
+          message="Pull이 필요합니다"
+          description="Diff / Push를 실행하려면 먼저 Pull을 실행하여 서버 데이터를 가져오세요."
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
+      {/* ── Diff 결과 ────────────────────────────────────────────────────── */}
+      <Spin spinning={diffLoading}>
+        {diffResult && (
+          <>
+            <Divider>
+              <Text type="secondary" style={{ fontSize: 13 }}>Diff 결과</Text>
+            </Divider>
+            <DiffViewer diff={diffResult} />
+          </>
+        )}
+      </Spin>
     </div>
   );
 }
