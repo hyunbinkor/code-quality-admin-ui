@@ -2,9 +2,13 @@
  * src/pages/DashboardPage.tsx
  *
  * 대시보드 페이지.
- *   - /health 30초 폴링 (usePollHealth)
+ *   - 서버 연결 상태 표시 (ServerStatus 컴포넌트)
  *   - /api/data/stats 통계 위젯 (규칙 수, 태그 수, 카테고리 분포)
  *   - 마지막 Pull / Push 시각 (dataStore에서 읽기)
+ *
+ * Step 13 변경:
+ *   - usePollHealth() 제거 → App.tsx(AppInner)에서 앱 전체 수명 동안 유지
+ *     (페이지 이탈 시 폴링이 끊기는 문제 해결)
  */
 import { useEffect, useState, useCallback } from 'react';
 import {
@@ -29,7 +33,6 @@ import {
   ApiOutlined,
   AppstoreOutlined,
 } from '@ant-design/icons';
-import usePollHealth from '@/hooks/usePollHealth';
 import ServerStatus from '@/components/common/ServerStatus';
 import { getStats } from '@/api/dataApi';
 import { useDataStore } from '@/stores/dataStore';
@@ -57,16 +60,16 @@ function formatDateTime(iso: string | null): string {
 }
 
 export default function DashboardPage() {
-  usePollHealth();
+  // ⚠️ usePollHealth()는 App.tsx(AppInner)에서 호출 — 여기서 제거됨
 
-  const lastPullAt = useDataStore((s) => s.lastPullAt);
-  const lastPushAt = useDataStore((s) => s.lastPushAt);
-  const rules      = useDataStore((s) => s.rules);
+  const lastPullAt  = useDataStore((s) => s.lastPullAt);
+  const lastPushAt  = useDataStore((s) => s.lastPushAt);
+  const rules       = useDataStore((s) => s.rules);
   const notifyError = useUiStore((s) => s.notifyError);
 
-  const [stats, setStats]           = useState<StatsResponse['stats'] | null>(null);
+  const [stats, setStats]               = useState<StatsResponse['stats'] | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
-  const [statsError, setStatsError]   = useState<string | null>(null);
+  const [statsError, setStatsError]     = useState<string | null>(null);
 
   const fetchStats = useCallback(async () => {
     setStatsLoading(true);
@@ -92,18 +95,18 @@ export default function DashboardPage() {
     acc[rule.category] = (acc[rule.category] ?? 0) + 1;
     return acc;
   }, {});
-  const totalRules     = rules.length;
-  const activeRules    = rules.filter((r) => r.isActive).length;
+  const totalRules  = rules.length;
+  const activeRules = rules.filter((r) => r.isActive).length;
 
   return (
     <div>
       {/* ── 타이틀 ───────────────────────────────────────────────────────── */}
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
+          display:        'flex',
+          alignItems:     'center',
           justifyContent: 'space-between',
-          marginBottom: 24,
+          marginBottom:   24,
         }}
       >
         <Title level={4} style={{ margin: 0 }}>대시보드</Title>
@@ -170,7 +173,12 @@ export default function DashboardPage() {
                 valueStyle={{ color: '#52c41a' }}
               />
               {totalRules > 0 && (
-                <Text type="secondary" style={{ fontSize: 11 }}>로컬 기준</Text>
+                <Progress
+                  percent={Math.round((activeRules / totalRules) * 100)}
+                  size="small"
+                  strokeColor="#52c41a"
+                  style={{ marginTop: 8 }}
+                />
               )}
             </Card>
           </Col>
@@ -178,86 +186,78 @@ export default function DashboardPage() {
           <Col xs={24} sm={12} lg={6}>
             <Card>
               <Statistic
-                title="전체 태그"
+                title="태그 수"
                 value={stats?.tags.count ?? '—'}
                 prefix={<TagsOutlined />}
                 suffix={stats ? '개' : ''}
                 valueStyle={{ color: '#722ed1' }}
               />
+              {stats && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  복합 태그 {stats.tags.compoundCount}개 포함
+                </Text>
+              )}
             </Card>
           </Col>
 
           <Col xs={24} sm={12} lg={6}>
             <Card>
               <Statistic
-                title="복합 태그"
-                value={stats?.tags.compoundCount ?? '—'}
-                prefix={<TagsOutlined />}
+                title="카테고리 수"
+                value={stats?.tags.categories.length ?? '—'}
+                prefix={<AppstoreOutlined />}
                 suffix={stats ? '개' : ''}
-                valueStyle={{ color: '#13c2c2' }}
+                valueStyle={{ color: '#fa8c16' }}
               />
             </Card>
           </Col>
         </Row>
       </Spin>
 
-      {/* ── 하단 2열 ─────────────────────────────────────────────────────── */}
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        {/* 카테고리별 규칙 분포 */}
-        <Col xs={24} lg={12}>
-          <Card
-            title={<Space><AppstoreOutlined />카테고리별 규칙 분포</Space>}
-            style={{ minHeight: 280 }}
-          >
-            {totalRules === 0 ? (
-              <Text type="secondary">
-                Pull을 실행하면 카테고리 분포가 표시됩니다.
-              </Text>
-            ) : (
-              Object.entries(categoryCounts)
-                .sort(([, a], [, b]) => b - a)
-                .map(([category, count], idx) => {
-                  const label =
-                    RULE_CATEGORY_LABELS[
-                      category as keyof typeof RULE_CATEGORY_LABELS
-                    ] ?? category;
-                  const percent = Math.round((count / totalRules) * 100);
-
-                  return (
-                    <div key={category} style={{ marginBottom: 10 }}>
-                      <div
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          marginBottom: 2,
-                        }}
-                      >
-                        <Text style={{ fontSize: 13 }}>{label}</Text>
-                        <Text type="secondary" style={{ fontSize: 13 }}>
-                          {count}개 ({percent}%)
-                        </Text>
-                      </div>
-                      <Tooltip title={`${count}개 / 전체 ${totalRules}개`}>
-                        <Progress
-                          percent={percent}
-                          strokeColor={CATEGORY_COLORS[idx % CATEGORY_COLORS.length]}
-                          showInfo={false}
-                          size="small"
-                        />
-                      </Tooltip>
+      {/* ── 카테고리별 규칙 분포 (로컬 데이터 기준) ─────────────────────── */}
+      {totalRules > 0 && (
+        <Card
+          title={
+            <Space>
+              <AppstoreOutlined />
+              카테고리별 규칙 분포
+              <Text type="secondary" style={{ fontSize: 12 }}>(로컬 기준)</Text>
+            </Space>
+          }
+          size="small"
+          style={{ marginTop: 16 }}
+        >
+          <Row gutter={[8, 8]}>
+            {Object.entries(categoryCounts)
+              .sort(([, a], [, b]) => b - a)
+              .map(([cat, count], idx) => (
+                <Col key={cat} xs={24} sm={12} lg={8}>
+                  <Tooltip
+                    title={`${RULE_CATEGORY_LABELS[cat as keyof typeof RULE_CATEGORY_LABELS] ?? cat}: ${count}개`}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Text style={{ fontSize: 12, width: 160, flexShrink: 0 }} ellipsis>
+                        {RULE_CATEGORY_LABELS[cat as keyof typeof RULE_CATEGORY_LABELS] ?? cat}
+                      </Text>
+                      <Progress
+                        percent={Math.round((count / totalRules) * 100)}
+                        size="small"
+                        strokeColor={CATEGORY_COLORS[idx % CATEGORY_COLORS.length]}
+                        format={() => `${count}`}
+                        style={{ flex: 1, margin: 0 }}
+                      />
                     </div>
-                  );
-                })
-            )}
-          </Card>
-        </Col>
+                  </Tooltip>
+                </Col>
+              ))}
+          </Row>
+        </Card>
+      )}
 
-        {/* 동기화 현황 */}
+      {/* ── 동기화 정보 ──────────────────────────────────────────────────── */}
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={12}>
-          <Card
-            title={<Space><ClockCircleOutlined />동기화 현황</Space>}
-            style={{ minHeight: 280 }}
-          >
+          <Card size="small" title={<Space><ClockCircleOutlined />동기화 정보</Space>}>
             <Statistic
               title="마지막 Pull"
               value={formatDateTime(lastPullAt)}
@@ -281,22 +281,19 @@ export default function DashboardPage() {
             />
           </Card>
         </Col>
-      </Row>
 
-      {/* 태그 카테고리 목록 (서버 응답 기준) */}
-      {stats && stats.tags.categories.length > 0 && (
-        <Card
-          title="태그 카테고리 (서버 기준)"
-          size="small"
-          style={{ marginTop: 16 }}
-        >
-          <Space wrap>
-            {stats.tags.categories.map((cat) => (
-              <Text key={cat} code style={{ fontSize: 12 }}>{cat}</Text>
-            ))}
-          </Space>
-        </Card>
-      )}
+        {stats && stats.tags.categories.length > 0 && (
+          <Col xs={24} lg={12}>
+            <Card title="태그 카테고리 (서버 기준)" size="small">
+              <Space wrap>
+                {stats.tags.categories.map((cat) => (
+                  <Text key={cat} code style={{ fontSize: 12 }}>{cat}</Text>
+                ))}
+              </Space>
+            </Card>
+          </Col>
+        )}
+      </Row>
     </div>
   );
 }
