@@ -7,9 +7,16 @@
  *   - 서버 연결 상태 (serverConnected, lastCheckedAt)
  *   - 토스트 알림 큐 (notifications[])
  *
- * 서버 연결 폴링은 Step 6(대시보드)에서 useEffect로 30초 간격 실행합니다.
+ * 서버 연결 폴링은 App.tsx(AppInner)에서 usePollHealth()로 30초 간격 실행합니다.
+ *
+ * [Fix] useServerStatus 셀렉터에 useShallow 래퍼 적용 (Zustand v5).
+ *   - v5에서 두 번째 인자로 equalityFn을 넘기는 방식이 제거됨.
+ *   - 셀렉터가 객체를 반환할 때 매 호출마다 새 참조가 생성되어
+ *     무한 리렌더 루프가 발생하는 문제를 useShallow 래퍼로 해결.
+ *   - import 경로: 'zustand/react/shallow'
  */
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 타입 정의
@@ -155,14 +162,25 @@ export const useUiStore = create<UiStore>((set, get) => ({
 // 셀렉터
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 서버 연결 상태만 구독 */
+/**
+ * 서버 연결 상태만 구독.
+ *
+ * ⚠️ Zustand v5: 두 번째 인자로 equalityFn을 넘기는 방식이 제거됨.
+ *   객체를 반환하는 셀렉터는 반드시 useShallow()로 감싸야 합니다.
+ *   그렇지 않으면 매 렌더마다 새 객체({} !== {})가 반환되어
+ *   무한 리렌더 루프가 발생합니다.
+ *
+ *   import 경로: 'zustand/react/shallow'  ← 반드시 이 경로
+ */
 export const useServerStatus = () =>
-  useUiStore((s) => ({
-    serverStatus: s.serverStatus,
-    lastCheckedAt: s.lastCheckedAt,
-    serverVersion: s.serverVersion,
-  }));
+  useUiStore(
+    useShallow((s) => ({
+      serverStatus:  s.serverStatus,
+      lastCheckedAt: s.lastCheckedAt,
+      serverVersion: s.serverVersion,
+    })),
+  );
 
-/** 알림 목록만 구독 */
+/** 알림 목록만 구독 (배열 참조는 Zustand가 동일하게 유지하므로 useShallow 불필요) */
 export const useNotifications = () =>
   useUiStore((s) => s.notifications);

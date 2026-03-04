@@ -3,8 +3,13 @@
  *
  * 규칙·태그 데이터 및 버전 관리 Zustand 스토어.
  * Pull / 태그·규칙 CRUD / Push 성공 후 버전 갱신 포함.
+ *
+ * [Fix] useVersionInfo / useDataStatus 셀렉터에 useShallow 래퍼 적용 (Zustand v5).
+ *   - v5에서 두 번째 equalityFn 인자가 제거됨.
+ *   - 객체를 반환하는 셀렉터는 반드시 useShallow()로 감싸야 무한 리렌더를 막을 수 있음.
  */
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import { pullData } from '@/api/dataApi';
 import {
   saveAfterPull,
@@ -260,15 +265,31 @@ export const useDataStore = create<DataStore>((set, get) => ({
 // 셀렉터
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const useRules       = () => useDataStore((s) => s.rules);
-export const useTags        = () => useDataStore((s) => s.tags);
-export const useVersionInfo = () => useDataStore((s) => ({
-  baseVersion: s.baseVersion,
-  lastPullAt:  s.lastPullAt,
-  lastPushAt:  s.lastPushAt,
-}));
-export const useDataStatus  = () => useDataStore((s) => ({
-  isLoading:  s.isLoading,
-  isHydrated: s.isHydrated,
-  error:      s.error,
-}));
+/**
+ * 원시값(배열 참조)을 그대로 반환하므로 useShallow 불필요.
+ * Zustand는 rules 배열 자체의 참조가 바뀔 때만 리렌더를 트리거합니다.
+ */
+export const useRules = () => useDataStore((s) => s.rules);
+export const useTags  = () => useDataStore((s) => s.tags);
+
+/**
+ * ⚠️ Zustand v5: 객체를 반환하는 셀렉터는 반드시 useShallow()로 감싸야 합니다.
+ *   그렇지 않으면 매 렌더마다 새 객체({} !== {})가 반환되어 무한 리렌더 루프가 발생합니다.
+ */
+export const useVersionInfo = () =>
+  useDataStore(
+    useShallow((s) => ({
+      baseVersion: s.baseVersion,
+      lastPullAt:  s.lastPullAt,
+      lastPushAt:  s.lastPushAt,
+    })),
+  );
+
+export const useDataStatus = () =>
+  useDataStore(
+    useShallow((s) => ({
+      isLoading:  s.isLoading,
+      isHydrated: s.isHydrated,
+      error:      s.error,
+    })),
+  );
