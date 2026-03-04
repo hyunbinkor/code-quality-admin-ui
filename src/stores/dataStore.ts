@@ -2,11 +2,13 @@
  * src/stores/dataStore.ts
  *
  * 규칙·태그 데이터 및 버전 관리 Zustand 스토어.
+ * Pull / 태그·규칙 CRUD / Push 성공 후 버전 갱신 포함.
  */
 import { create } from 'zustand';
 import { pullData } from '@/api/dataApi';
 import {
   saveAfterPull,
+  saveAfterPush,
   saveSnapshot,
   loadSnapshot,
   loadMeta,
@@ -20,28 +22,28 @@ import { EMPTY_TAG_DATA } from '@/types/tag';
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface DataState {
-  rules: Rule[];
-  tags: TagData;
-  baseVersion: number | null;
-  lastPullAt: string | null;
-  lastPushAt: string | null;
-  isLoading: boolean;
-  isHydrated: boolean;
-  error: string | null;
+  rules:        Rule[];
+  tags:         TagData;
+  baseVersion:  number | null;
+  lastPullAt:   string | null;
+  lastPushAt:   string | null;
+  isLoading:    boolean;
+  isHydrated:   boolean;
+  error:        string | null;
 }
 
 interface DataActions {
-  pull: () => Promise<void>;
-  hydrate: () => Promise<void>;
+  pull:      () => Promise<void>;
+  hydrate:   () => Promise<void>;
 
   // 규칙 CRUD
-  addRule: (rule: Rule) => void;
+  addRule:    (rule: Rule) => void;
   updateRule: (ruleId: string, updates: Partial<Rule>) => void;
   deleteRule: (ruleId: string) => void;
 
   // 태그 CRUD
-  upsertTag: (name: string, tag: TagDefinition) => void;
-  deleteTag: (name: string) => void;
+  upsertTag:  (name: string, tag: TagDefinition) => void;
+  deleteTag:  (name: string) => void;
 
   // 복합 태그 CRUD
   upsertCompoundTag: (name: string, tag: CompoundTag) => void;
@@ -54,8 +56,11 @@ interface DataActions {
   // 태그 전체 교체
   setTags: (tags: TagData) => void;
 
-  clearError: () => void;
-  persistCurrent: () => Promise<void>;
+  // Push 성공 후 버전 갱신
+  applyPushSuccess: (newVersion: number, pushedAt: string) => Promise<void>;
+
+  clearError:      () => void;
+  persistCurrent:  () => Promise<void>;
 }
 
 type DataStore = DataState & DataActions;
@@ -65,28 +70,26 @@ type DataStore = DataState & DataActions;
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const useDataStore = create<DataStore>((set, get) => ({
-  // 초기 상태
-  rules: [],
-  tags: EMPTY_TAG_DATA,
+  rules:       [],
+  tags:        EMPTY_TAG_DATA,
   baseVersion: null,
-  lastPullAt: null,
-  lastPushAt: null,
-  isLoading: false,
-  isHydrated: false,
-  error: null,
+  lastPullAt:  null,
+  lastPushAt:  null,
+  isLoading:   false,
+  isHydrated:  false,
+  error:       null,
 
   // ── Pull ───────────────────────────────────────────────────────────────────
   pull: async () => {
     set({ isLoading: true, error: null });
     try {
-      const pullRes = await pullData();
+      const pullRes     = await pullData();
       const rules       = pullRes.rules.items; // ⚠️ .items
       const tags        = pullRes.tags;
       const baseVersion = pullRes.version;
       const lastPullAt  = pullRes.pulledAt;
 
       set({ rules, tags, baseVersion, lastPullAt, isLoading: false, error: null });
-
       await saveAfterPull({ rules, tags, baseVersion, savedAt: lastPullAt });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Pull 실패';
@@ -107,12 +110,12 @@ export const useDataStore = create<DataStore>((set, get) => ({
 
       if (snapshot) {
         set({
-          rules: snapshot.rules,
-          tags: snapshot.tags,
+          rules:       snapshot.rules,
+          tags:        snapshot.tags,
           baseVersion: snapshot.baseVersion ?? baseVersion,
-          lastPullAt: lastPullAt ?? snapshot.savedAt,
+          lastPullAt:  lastPullAt ?? snapshot.savedAt,
           lastPushAt,
-          isHydrated: true,
+          isHydrated:  true,
         });
       } else {
         set({ baseVersion, lastPullAt, lastPushAt, isHydrated: true });
@@ -149,7 +152,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
         tags: { ...s.tags.tags, [name]: tag },
         _metadata: {
           ...s.tags._metadata,
-          totalTags: Object.keys({ ...s.tags.tags, [name]: tag }).length,
+          totalTags:   Object.keys({ ...s.tags.tags, [name]: tag }).length,
           lastUpdated: new Date().toISOString(),
         },
       },
@@ -167,7 +170,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
           tags: next,
           _metadata: {
             ...s.tags._metadata,
-            totalTags: Object.keys(next).length,
+            totalTags:   Object.keys(next).length,
             lastUpdated: new Date().toISOString(),
           },
         },
@@ -221,6 +224,21 @@ export const useDataStore = create<DataStore>((set, get) => ({
     get().persistCurrent().catch(console.error);
   },
 
+  // ── Push 성공 후 버전 갱신 ────────────────────────────────────────────────
+  applyPushSuccess: async (newVersion, pushedAt) => {
+    const { rules, tags } = get();
+    set({ baseVersion: newVersion, lastPushAt: pushedAt });
+    try {
+      await saveAfterPush(
+        { rules, tags, baseVersion: newVersion, savedAt: pushedAt },
+        pushedAt,
+        newVersion,
+      );
+    } catch (error) {
+      console.error('[dataStore] applyPushSuccess IndexedDB 저장 실패:', error);
+    }
+  },
+
   clearError: () => set({ error: null }),
 
   // ── persistCurrent ─────────────────────────────────────────────────────────
@@ -242,15 +260,15 @@ export const useDataStore = create<DataStore>((set, get) => ({
 // 셀렉터
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const useRules        = () => useDataStore((s) => s.rules);
-export const useTags         = () => useDataStore((s) => s.tags);
-export const useVersionInfo  = () => useDataStore((s) => ({
+export const useRules       = () => useDataStore((s) => s.rules);
+export const useTags        = () => useDataStore((s) => s.tags);
+export const useVersionInfo = () => useDataStore((s) => ({
   baseVersion: s.baseVersion,
   lastPullAt:  s.lastPullAt,
   lastPushAt:  s.lastPushAt,
 }));
-export const useDataStatus   = () => useDataStore((s) => ({
-  isLoading:   s.isLoading,
-  isHydrated:  s.isHydrated,
-  error:       s.error,
+export const useDataStatus  = () => useDataStore((s) => ({
+  isLoading:  s.isLoading,
+  isHydrated: s.isHydrated,
+  error:      s.error,
 }));
