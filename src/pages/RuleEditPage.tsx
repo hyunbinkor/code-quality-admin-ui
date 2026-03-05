@@ -5,17 +5,23 @@
  * - 폼 모드 (Ant Design Form) ↔ JSON 에디터 모드 (Monaco) 전환
  * - 신규 규칙 추가 (/rules/new) 및 기존 규칙 편집 (/rules/:id)
  *
- * 버그 수정:
- *   - 존재하지 않는 ruleId 접근 시 즉시 navigate → 깜빡임 + 안내 메시지 미표시
- *     → notFound 상태로 전환 후 Result 404 화면을 선언적으로 렌더
+ * 변경사항 ①: requiredTags / excludeTags → Select multiple + showSearch
+ * 변경사항 ②: sourcePrefix / sourceFile → AutoComplete
+ * 변경사항 ③: source → AutoComplete + 필수 제거 + 빈칸 시 '직접 추가' 저장
+ * 변경사항 ④: ruleId → 신규 규칙 시 자동 생성 버튼
+ * 변경사항 ⑤: tagCondition → 태그/연산자 클릭 보조 버튼
+ * 변경사항 ⑥: problematicCode / fixedCode → Monaco Editor (Java)
+ * 변경사항 ⑦: 출처 필드를 기본 정보 Card로 통합, Form 최대 폭 1600으로 확장
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
+  AutoComplete,
   Button,
   Card,
   Col,
+  Divider,
   Form,
   Input,
   InputNumber,
@@ -27,8 +33,10 @@ import {
   Spin,
   Switch,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
+import type { InputRef } from 'antd';
 import {
   ArrowLeftOutlined,
   CodeOutlined,
@@ -37,6 +45,7 @@ import {
   PlusOutlined,
   SaveOutlined,
   SyncOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { useDataStore } from '@/stores/dataStore';
@@ -66,6 +75,42 @@ interface PatternItem {
 }
 
 const EMPTY_PATTERN: PatternItem = { pattern: '', flags: 'g', description: '' };
+
+// ④ 카테고리 → ruleId 약자 매핑
+const CATEGORY_ABBR: Record<RuleCategory, string> = {
+  resource_management: 'RES',
+  security:            'SEC',
+  exception_handling:  'ERR',
+  performance:         'PERF',
+  architecture:        'ARCH',
+  code_style:          'STY',
+  naming_convention:   'NAM',
+  documentation:       'DOC',
+  general:             'GEN',
+};
+
+// ⑤ tagCondition 연산자 버튼 목록
+const TAG_OPERATORS = [
+  { label: '(',  value: '(',    title: '여는 괄호' },
+  { label: ')',  value: ')',    title: '닫는 괄호' },
+  { label: '&&', value: ' && ', title: 'AND 조건' },
+  { label: '||', value: ' || ', title: 'OR 조건' },
+  { label: '!',  value: '!',    title: 'NOT 조건' },
+];
+
+// ⑥ Monaco Java 에디터 공통 옵션
+const MONACO_JAVA_OPTIONS = {
+  minimap:              { enabled: false },
+  fontSize:             12,
+  tabSize:              4,
+  wordWrap:             'on'   as const,
+  scrollBeyondLastLine: false,
+  automaticLayout:      true,
+  lineNumbers:          'on'   as const,
+  folding:              false,
+  renderLineHighlight:  'none' as const,
+  scrollbar:            { vertical: 'auto' as const, horizontal: 'auto' as const },
+};
 
 const DEFAULT_RULE: Rule = {
   ruleId:          '',
@@ -103,6 +148,80 @@ const DEFAULT_RULE: Rule = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// unique 값 추출 헬퍼 (②③ AutoComplete 옵션용)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function toAutoCompleteOptions(rules: Rule[], field: keyof Rule) {
+  const seen = new Set<string>();
+  return rules
+    .map((r) => r[field] as string)
+    .filter((v) => typeof v === 'string' && v.trim() !== '' && v !== '직접 추가')
+    .filter((v) => {
+      if (seen.has(v)) return false;
+      seen.add(v);
+      return true;
+    })
+    .sort()
+    .map((v) => ({ value: v }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑥ JavaCodeEditor 서브 컴포넌트
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface JavaCodeEditorProps {
+  label:       string;
+  value:       string;
+  onChange:    (v: string) => void;
+  placeholder: string;
+}
+
+function JavaCodeEditor({ label, value, onChange, placeholder }: JavaCodeEditorProps) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Text style={{ fontSize: 13 }}>{label}</Text>
+        <Tag color="orange" style={{ margin: 0, fontSize: 11 }}>Java</Tag>
+      </div>
+      <div
+        style={{
+          border:       '1px solid #d9d9d9',
+          borderRadius: 6,
+          overflow:     'hidden',
+          minHeight:    180,
+          position:     'relative',
+        }}
+      >
+        {/* 빈 값일 때 placeholder 오버레이 */}
+        {value === '' && (
+          <div
+            style={{
+              position:      'absolute',
+              top:           10,
+              left:          60,
+              color:         '#bfbfbf',
+              fontSize:      12,
+              fontFamily:    'monospace',
+              pointerEvents: 'none',
+              zIndex:        1,
+            }}
+          >
+            {placeholder}
+          </div>
+        )}
+        <Editor
+          height="180px"
+          language="java"
+          value={value}
+          onChange={(v) => onChange(v ?? '')}
+          options={MONACO_JAVA_OPTIONS}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PatternEditor 서브 컴포넌트
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -115,9 +234,8 @@ interface PatternEditorProps {
 function PatternEditor({ label, value, onChange }: PatternEditorProps) {
   const add    = () => onChange([...value, { ...EMPTY_PATTERN }]);
   const remove = (idx: number) => onChange(value.filter((_, i) => i !== idx));
-  const update = (idx: number, field: keyof PatternItem, val: string) => {
+  const update = (idx: number, field: keyof PatternItem, val: string) =>
     onChange(value.map((item, i) => i === idx ? { ...item, [field]: val } : item));
-  };
 
   return (
     <div>
@@ -179,6 +297,7 @@ export default function RuleEditPage() {
   const isNew    = !id || id === 'new';
 
   const rules         = useDataStore((s) => s.rules);
+  const tags          = useDataStore((s) => s.tags);
   const isLoading     = useDataStore((s) => s.isLoading);
   const isHydrated    = useDataStore((s) => s.isHydrated);
   const baseVersion   = useDataStore((s) => s.baseVersion);
@@ -187,30 +306,44 @@ export default function RuleEditPage() {
   const notifySuccess = useUiStore((s) => s.notifySuccess);
   const notifyError   = useUiStore((s) => s.notifyError);
 
-  const [mode, setMode]                 = useState<EditMode>('form');
-  const [form]                          = Form.useForm<Rule>();
-  const [jsonValue, setJsonValue]       = useState('');
-  const [jsonError, setJsonError]       = useState<string | null>(null);
-  const [keywords, setKeywords]         = useState<string[]>([]);
-  const [requiredTags, setRequiredTags] = useState<string[]>([]);
-  const [excludeTags, setExcludeTags]   = useState<string[]>([]);
-  const [antiPatterns, setAntiPatterns] = useState<PatternItem[]>([]);
-  const [goodPatterns, setGoodPatterns] = useState<PatternItem[]>([]);
-  const [kwInput, setKwInput]   = useState('');
-  const [reqInput, setReqInput] = useState('');
-  const [excInput, setExcInput] = useState('');
-  // Fix: navigate 즉시 실행 대신 notFound 상태로 선언적 렌더
-  const [notFound, setNotFound] = useState(false);
+  const [mode, setMode]                       = useState<EditMode>('form');
+  const [form]                                = Form.useForm<Rule>();
+  const [jsonValue, setJsonValue]             = useState('');
+  const [jsonError, setJsonError]             = useState<string | null>(null);
+  const [keywords, setKeywords]               = useState<string[]>([]);
+  const [antiPatterns, setAntiPatterns]       = useState<PatternItem[]>([]);
+  const [goodPatterns, setGoodPatterns]       = useState<PatternItem[]>([]);
+  const [kwInput, setKwInput]                 = useState('');
+  const [notFound, setNotFound]               = useState(false);
+  // ⑥ 코드 예시 전용 state (Monaco는 null 불가)
+  const [problematicCode, setProblematicCode] = useState<string>('');
+  const [fixedCode, setFixedCode]             = useState<string>('');
 
-  // ── 초기 데이터 로드 ─────────────────────────────────────────────────────
+  // ⑤ tagCondition Input ref — 커서 위치 추적
+  const tagConditionRef = useRef<InputRef>(null);
+
+  // ① Pull된 tags.tags 키 목록 → Select 옵션
+  const tagOptions = useMemo(
+    () => Object.keys(tags.tags).sort().map((name) => ({ value: name, label: name })),
+    [tags.tags],
+  );
+
+  // ②③ AutoComplete 옵션 — rules 배열에서 동적 추출
+  const sourcePrefixOptions = useMemo(() => toAutoCompleteOptions(rules, 'sourcePrefix'), [rules]);
+  const sourceFileOptions   = useMemo(() => toAutoCompleteOptions(rules, 'sourceFile'),   [rules]);
+  const sourceOptions       = useMemo(() => toAutoCompleteOptions(rules, 'source'),       [rules]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 초기 데이터 로드
+  // ─────────────────────────────────────────────────────────────────────────
   const initFromRule = useCallback(
     (rule: Rule) => {
       form.setFieldsValue(rule);
       setKeywords(rule.keywords ?? []);
-      setRequiredTags(rule.requiredTags ?? []);
-      setExcludeTags(rule.excludeTags ?? []);
       setAntiPatterns((rule.antiPatterns ?? []) as PatternItem[]);
       setGoodPatterns((rule.goodPatterns ?? []) as PatternItem[]);
+      setProblematicCode(rule.problematicCode ?? '');
+      setFixedCode(rule.fixedCode ?? '');
       setJsonValue(JSON.stringify(rule, null, 2));
     },
     [form],
@@ -221,32 +354,95 @@ export default function RuleEditPage() {
       form.setFieldsValue(DEFAULT_RULE);
       setJsonValue(JSON.stringify(DEFAULT_RULE, null, 2));
       setKeywords([]);
-      setRequiredTags([]);
-      setExcludeTags([]);
       setAntiPatterns([]);
       setGoodPatterns([]);
+      setProblematicCode('');
+      setFixedCode('');
     } else {
       const found = rules.find((r) => r.ruleId === id);
       if (found) {
         setNotFound(false);
         initFromRule(found);
       } else if (isHydrated && rules.length > 0) {
-        // Fix: navigate 즉시 실행 제거 → notFound 상태 전환으로 Result 화면 표시
         setNotFound(true);
       }
     }
   }, [id, isNew, rules, isHydrated, form, initFromRule]);
 
-  // ── 모드 전환: 폼 → JSON ─────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // ⑤ tagCondition 커서 삽입 헬퍼
+  // ─────────────────────────────────────────────────────────────────────────
+  const insertAtCursor = (text: string) => {
+    const inputEl = tagConditionRef.current?.input;
+    const current = (form.getFieldValue('tagCondition') as string) ?? '';
+    const start   = inputEl?.selectionStart ?? current.length;
+    const end     = inputEl?.selectionEnd   ?? current.length;
+    const next    = current.slice(0, start) + text + current.slice(end);
+    form.setFieldValue('tagCondition', next);
+    requestAnimationFrame(() => {
+      inputEl?.focus();
+      const pos = start + text.length;
+      inputEl?.setSelectionRange(pos, pos);
+    });
+  };
+
+  const clearTagCondition = () => {
+    form.setFieldValue('tagCondition', '');
+    tagConditionRef.current?.input?.focus();
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ④ ruleId 자동 생성
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleAutoRuleId = () => {
+    const prefix   = (form.getFieldValue('sourcePrefix') as string)?.trim();
+    const section  = (form.getFieldValue('sectionNumber') as string)?.trim();
+    const category = form.getFieldValue('category') as RuleCategory;
+
+    if (!prefix && !section) {
+      notifyError('자동 생성 실패', '소스 프리픽스와 절 번호를 먼저 입력해주세요.');
+      return;
+    }
+    if (!prefix) {
+      notifyError('자동 생성 실패', '소스 프리픽스를 먼저 입력해주세요.');
+      return;
+    }
+    if (!section) {
+      notifyError('자동 생성 실패', '절 번호를 먼저 입력해주세요.');
+      return;
+    }
+
+    const abbr        = CATEGORY_ABBR[category] ?? 'GEN';
+    const sectionPart = section.replace(/\./g, '_');
+    const generated   = `${prefix}.${abbr}.${sectionPart}`;
+
+    if (rules.some((r) => r.ruleId === generated)) {
+      notifyError('자동 생성 실패', `이미 존재하는 ruleId입니다: ${generated}`);
+      return;
+    }
+
+    form.setFieldValue('ruleId', generated);
+    void form.validateFields(['ruleId']);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 모드 전환
+  // ─────────────────────────────────────────────────────────────────────────
   const switchToJson = () => {
-    const values = form.getFieldsValue(true) as Rule;
-    const merged: Rule = { ...values, keywords, requiredTags, excludeTags, antiPatterns, goodPatterns };
+    const values   = form.getFieldsValue(true) as Rule;
+    const merged: Rule = {
+      ...values,
+      problematicCode: problematicCode.trim() || null,
+      fixedCode:       fixedCode.trim()       || null,
+      keywords,
+      antiPatterns,
+      goodPatterns,
+    };
     setJsonValue(JSON.stringify(merged, null, 2));
     setJsonError(null);
     setMode('json');
   };
 
-  // ── 모드 전환: JSON → 폼 ─────────────────────────────────────────────────
   const switchToForm = () => {
     try {
       const parsed = JSON.parse(jsonValue) as Rule;
@@ -263,7 +459,9 @@ export default function RuleEditPage() {
     else switchToForm();
   };
 
-  // ── 유효성 검사 ──────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // 유효성 검사
+  // ─────────────────────────────────────────────────────────────────────────
   const validate = (rule: Rule): string | null => {
     if (!rule.ruleId?.trim()) return 'ruleId는 필수입니다.';
     if (!rule.title?.trim())  return '제목은 필수입니다.';
@@ -273,7 +471,9 @@ export default function RuleEditPage() {
     return null;
   };
 
-  // ── 저장 (폼 모드) ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // 저장
+  // ─────────────────────────────────────────────────────────────────────────
   const handleFormSave = async () => {
     try {
       await form.validateFields();
@@ -285,9 +485,10 @@ export default function RuleEditPage() {
     const values = form.getFieldsValue(true) as Rule;
     const rule: Rule = {
       ...values,
+      source:          values.source?.trim() || '직접 추가',
+      problematicCode: problematicCode.trim() || null,
+      fixedCode:       fixedCode.trim()       || null,
       keywords,
-      requiredTags,
-      excludeTags,
       antiPatterns,
       goodPatterns,
       metadata: {
@@ -311,7 +512,6 @@ export default function RuleEditPage() {
     }
   };
 
-  // ── 저장 (JSON 모드) ──────────────────────────────────────────────────────
   const handleJsonSave = () => {
     let parsed: Rule;
     try {
@@ -321,6 +521,8 @@ export default function RuleEditPage() {
       notifyError('저장 실패', 'JSON 파싱 오류');
       return;
     }
+
+    parsed = { ...parsed, source: parsed.source?.trim() || '직접 추가' };
 
     const err = validate(parsed);
     if (err) { setJsonError(err); notifyError('저장 실패', err); return; }
@@ -338,7 +540,9 @@ export default function RuleEditPage() {
 
   const handleSave = () => (mode === 'form' ? handleFormSave() : handleJsonSave());
 
-  // ── 태그 칩 헬퍼 ─────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // 키워드 칩 헬퍼
+  // ─────────────────────────────────────────────────────────────────────────
   const addChip = (
     val: string,
     list: string[],
@@ -354,7 +558,7 @@ export default function RuleEditPage() {
     setList(list.filter((t) => t !== chip));
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 가드 1: hydrate 중 스피너
+  // 가드 1: hydrate 중
   // ─────────────────────────────────────────────────────────────────────────
   if (!isHydrated || isLoading) {
     return (
@@ -388,7 +592,7 @@ export default function RuleEditPage() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 가드 3: 존재하지 않는 ruleId — Fix: navigate 대신 Result 404 렌더
+  // 가드 3: 존재하지 않는 ruleId
   // ─────────────────────────────────────────────────────────────────────────
   if (notFound) {
     return (
@@ -424,7 +628,7 @@ export default function RuleEditPage() {
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div>
-      {/* ── 헤더 ──────────────────────────────────────────────────────────── */}
+      {/* ── 헤더 ────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <Space>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/rules')}>목록</Button>
@@ -437,15 +641,14 @@ export default function RuleEditPage() {
             value={mode}
             onChange={handleModeChange}
             options={[
-              { label: <Space><FormOutlined />폼</Space>,          value: 'form' },
-              { label: <Space><CodeOutlined />JSON 에디터</Space>,  value: 'json' },
+              { label: <Space><FormOutlined />폼</Space>,         value: 'form' },
+              { label: <Space><CodeOutlined />JSON 에디터</Space>, value: 'json' },
             ]}
           />
           <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>저장</Button>
         </Space>
       </div>
 
-      {/* 신규 규칙이지만 Pull 데이터 없는 경우 소프트 경고 */}
       {isNew && baseVersion === null && (
         <Alert
           type="warning"
@@ -469,14 +672,17 @@ export default function RuleEditPage() {
 
       {/* ══════════════════════════════════════════════════════════════════
           폼 모드
+          ⑦ maxWidth 1600으로 확장
       ══════════════════════════════════════════════════════════════════ */}
       {mode === 'form' && (
-        <Form form={form} layout="vertical" style={{ maxWidth: 900 }}>
+        <Form form={form} layout="vertical" style={{ maxWidth: 1600, width: '100%' }}>
 
-          {/* ── 기본 정보 ───────────────────────────────────────────────── */}
+          {/* ── 기본 정보 + 출처 (⑦ 통합) ──────────────────────────────── */}
           <Card title="기본 정보" style={{ marginBottom: 16 }}>
             <Row gutter={16}>
-              <Col xs={24} sm={12}>
+
+              {/* 규칙 ID */}
+              <Col xs={24} sm={12} lg={8}>
                 <Form.Item
                   name="ruleId"
                   label="규칙 ID"
@@ -492,30 +698,99 @@ export default function RuleEditPage() {
                       },
                     },
                   ]}
+                  extra={
+                    isNew && (
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        패턴: {'<프리픽스>.<카테고리약자>.<절번호>'}  예) G1.ERR.7_3_1
+                      </Text>
+                    )
+                  }
                 >
                   <Input
                     placeholder="예: G1.ERR.7_3_1"
                     disabled={!isNew}
                     style={{ fontFamily: 'monospace' }}
+                    addonAfter={
+                      isNew ? (
+                        <Tooltip title="소스 프리픽스 + 카테고리 + 절 번호로 자동 생성">
+                          <span
+                            onClick={handleAutoRuleId}
+                            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                          >
+                            <ThunderboltOutlined />
+                            자동 생성
+                          </span>
+                        </Tooltip>
+                      ) : undefined
+                    }
                   />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={12}>
+
+              {/* 제목 */}
+              <Col xs={24} sm={12} lg={16}>
                 <Form.Item name="title" label="제목" rules={[{ required: true, message: '제목은 필수입니다.' }]}>
                   <Input placeholder="규칙 제목" />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={8}>
+
+              {/* ⑦ 출처 필드 — 기본 정보에 통합 */}
+              <Col xs={24} sm={6} lg={4}>
+                <Form.Item name="sourcePrefix" label="소스 프리픽스">
+                  <AutoComplete
+                    options={sourcePrefixOptions}
+                    placeholder="예: G1"
+                    filterOption={(input, option) =>
+                      (option?.value as string).toLowerCase().includes(input.toLowerCase())
+                    }
+                    style={{ fontFamily: 'monospace' }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={6} lg={4}>
                 <Form.Item name="sectionNumber" label="절 번호">
                   <Input placeholder="예: 7.3.1" />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={4}>
+              <Col xs={24} sm={6} lg={6}>
+                <Form.Item name="sourceFile" label="소스 파일">
+                  <AutoComplete
+                    options={sourceFileOptions}
+                    placeholder="예: guideline_1.docx"
+                    filterOption={(input, option) =>
+                      (option?.value as string).toLowerCase().includes(input.toLowerCase())
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={6} lg={6}>
+                <Form.Item
+                  name="source"
+                  label="소스 참조"
+                  extra={
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      비워두면 '직접 추가'로 저장
+                    </Text>
+                  }
+                >
+                  <AutoComplete
+                    options={sourceOptions}
+                    placeholder="예: guideline:7.3.1 (선택)"
+                    filterOption={(input, option) =>
+                      (option?.value as string).toLowerCase().includes(input.toLowerCase())
+                    }
+                    style={{ fontFamily: 'monospace' }}
+                  />
+                </Form.Item>
+              </Col>
+
+              {/* 레벨 / 카테고리 / 심각도 */}
+              <Col xs={12} sm={4} lg={2}>
                 <Form.Item name="level" label="레벨 (1~4)">
                   <InputNumber min={1} max={4} style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={6}>
+              <Col xs={24} sm={10} lg={6}>
                 <Form.Item name="category" label="카테고리">
                   <Select>
                     {(Object.keys(RULE_CATEGORY_LABELS) as RuleCategory[]).map((c) => (
@@ -524,7 +799,7 @@ export default function RuleEditPage() {
                   </Select>
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={6}>
+              <Col xs={24} sm={10} lg={4}>
                 <Form.Item name="severity" label="심각도">
                   <Select>
                     {(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as RuleSeverity[]).map((s) => (
@@ -536,40 +811,28 @@ export default function RuleEditPage() {
                 </Form.Item>
               </Col>
             </Row>
-            <Form.Item name="isActive" label="활성 여부" valuePropName="checked">
+
+            <Form.Item name="isActive" label="활성 여부" valuePropName="checked" style={{ marginBottom: 0 }}>
               <Switch checkedChildren="활성" unCheckedChildren="비활성" />
             </Form.Item>
           </Card>
 
           {/* ── 내용 ────────────────────────────────────────────────────── */}
           <Card title="내용" style={{ marginBottom: 16 }}>
-            <Form.Item name="description" label="설명">
-              <TextArea rows={3} placeholder="규칙 상세 설명 (위험성, 발생 원인)" />
-            </Form.Item>
-            <Form.Item name="message" label="위반 메시지">
-              <TextArea rows={2} placeholder="위반 감지 시 표시할 메시지" />
-            </Form.Item>
-            <Form.Item name="suggestion" label="개선 제안">
-              <TextArea rows={2} placeholder="위반 수정 방법" />
-            </Form.Item>
-          </Card>
-
-          {/* ── 출처 ────────────────────────────────────────────────────── */}
-          <Card title="출처" style={{ marginBottom: 16 }}>
             <Row gutter={16}>
-              <Col xs={24} sm={8}>
-                <Form.Item name="sourcePrefix" label="소스 프리픽스">
-                  <Input placeholder="예: G1" style={{ fontFamily: 'monospace' }} />
+              <Col xs={24} lg={8}>
+                <Form.Item name="description" label="설명">
+                  <TextArea rows={4} placeholder="규칙 상세 설명 (위험성, 발생 원인)" />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={8}>
-                <Form.Item name="sourceFile" label="소스 파일">
-                  <Input placeholder="예: guideline_1.docx" />
+              <Col xs={24} lg={8}>
+                <Form.Item name="message" label="위반 메시지">
+                  <TextArea rows={4} placeholder="위반 감지 시 표시할 메시지" />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={8}>
-                <Form.Item name="source" label="소스 참조">
-                  <Input placeholder="예: guideline:7.3.1" style={{ fontFamily: 'monospace' }} />
+              <Col xs={24} lg={8}>
+                <Form.Item name="suggestion" label="개선 제안">
+                  <TextArea rows={4} placeholder="위반 수정 방법" />
                 </Form.Item>
               </Col>
             </Row>
@@ -578,7 +841,7 @@ export default function RuleEditPage() {
           {/* ── 태그 / 검사 설정 ─────────────────────────────────────────── */}
           <Card title="태그 / 검사 설정" style={{ marginBottom: 16 }}>
             <Row gutter={16}>
-              <Col xs={24} sm={12}>
+              <Col xs={24} sm={12} lg={6}>
                 <Form.Item name="checkType" label="검사 타입">
                   <Select>
                     {(Object.keys(RULE_CHECK_TYPE_LABELS) as RuleCheckType[]).map((t) => (
@@ -587,100 +850,181 @@ export default function RuleEditPage() {
                   </Select>
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={12}>
+              <Col xs={24} sm={12} lg={18}>
+                <Form.Item name="checkTypeReason" label="검사 타입 선택 이유">
+                  <TextArea rows={1} placeholder="checkType을 선택한 이유 설명" />
+                </Form.Item>
+              </Col>
+
+              {/* ⑤ tagCondition + 보조 버튼 */}
+              <Col xs={24}>
                 <Form.Item name="tagCondition" label="태그 조건식">
                   <Input
+                    ref={tagConditionRef}
                     placeholder="예: (IS_SERVICE || IS_CONTROLLER)"
+                    style={{ fontFamily: 'monospace' }}
+                  />
+                </Form.Item>
+                {/* 연산자 버튼 행 */}
+                <div style={{ marginTop: -12, marginBottom: 8 }}>
+                  <Space size={4} wrap>
+                    <Text type="secondary" style={{ fontSize: 11, marginRight: 4 }}>연산자:</Text>
+                    {TAG_OPERATORS.map((op) => (
+                      <Tooltip key={op.value} title={op.title}>
+                        <Button
+                          size="small"
+                          style={{ fontFamily: 'monospace', minWidth: 36 }}
+                          onClick={() => insertAtCursor(op.value)}
+                        >
+                          {op.label}
+                        </Button>
+                      </Tooltip>
+                    ))}
+                    <Divider type="vertical" />
+                    <Button size="small" danger onClick={clearTagCondition}>지우기</Button>
+                  </Space>
+                </div>
+                {/* 태그 버튼 패널 */}
+                {tagOptions.length > 0 ? (
+                  <div
+                    style={{
+                      border:       '1px solid #f0f0f0',
+                      borderRadius: 6,
+                      padding:      '8px 10px',
+                      background:   '#fafafa',
+                      marginBottom: 12,
+                    }}
+                  >
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6 }}>
+                      태그 클릭 시 커서 위치에 삽입됩니다
+                    </Text>
+                    <Space size={[4, 4]} wrap>
+                      {tagOptions.map((opt) => (
+                        <Tag
+                          key={opt.value}
+                          color="blue"
+                          style={{ cursor: 'pointer', fontFamily: 'monospace', fontSize: 11, userSelect: 'none' }}
+                          onClick={() => insertAtCursor(opt.value)}
+                        >
+                          {opt.value}
+                        </Tag>
+                      ))}
+                    </Space>
+                  </div>
+                ) : (
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 12 }}>
+                    · Pull 후 태그 목록이 표시됩니다
+                  </Text>
+                )}
+              </Col>
+
+              {/* ① 필수 태그 */}
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="requiredTags"
+                  label={
+                    <Space size={4}>
+                      필수 태그
+                      <Text type="secondary" style={{ fontSize: 12 }}>(requiredTags)</Text>
+                      {tagOptions.length === 0 && (
+                        <Text type="warning" style={{ fontSize: 11 }}>· Pull 후 태그 목록이 표시됩니다</Text>
+                      )}
+                    </Space>
+                  }
+                >
+                  <Select
+                    mode="multiple"
+                    showSearch
+                    allowClear
+                    placeholder={tagOptions.length > 0 ? '태그 검색 또는 직접 입력' : 'Pull 없이 직접 입력 가능'}
+                    options={tagOptions}
+                    filterOption={(input, option) =>
+                      (option?.value as string).toLowerCase().includes(input.toLowerCase())
+                    }
+                    notFoundContent={
+                      <Text type="secondary" style={{ fontSize: 12, padding: '4px 8px', display: 'block' }}>
+                        일치하는 태그 없음 — Enter로 직접 추가
+                      </Text>
+                    }
+                    tokenSeparators={[',']}
+                    style={{ fontFamily: 'monospace' }}
+                  />
+                </Form.Item>
+              </Col>
+
+              {/* ① 제외 태그 */}
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="excludeTags"
+                  label={
+                    <Space size={4}>
+                      제외 태그
+                      <Text type="secondary" style={{ fontSize: 12 }}>(excludeTags)</Text>
+                      {tagOptions.length === 0 && (
+                        <Text type="warning" style={{ fontSize: 11 }}>· Pull 후 태그 목록이 표시됩니다</Text>
+                      )}
+                    </Space>
+                  }
+                >
+                  <Select
+                    mode="multiple"
+                    showSearch
+                    allowClear
+                    placeholder={tagOptions.length > 0 ? '태그 검색 또는 직접 입력' : 'Pull 없이 직접 입력 가능'}
+                    options={tagOptions}
+                    filterOption={(input, option) =>
+                      (option?.value as string).toLowerCase().includes(input.toLowerCase())
+                    }
+                    notFoundContent={
+                      <Text type="secondary" style={{ fontSize: 12, padding: '4px 8px', display: 'block' }}>
+                        일치하는 태그 없음 — Enter로 직접 추가
+                      </Text>
+                    }
+                    tokenSeparators={[',']}
                     style={{ fontFamily: 'monospace' }}
                   />
                 </Form.Item>
               </Col>
             </Row>
-            <Form.Item name="checkTypeReason" label="검사 타입 선택 이유">
-              <TextArea rows={2} placeholder="checkType을 선택한 이유 설명" />
-            </Form.Item>
-
-            {/* 필수 태그 */}
-            <Form.Item label="필수 태그 (requiredTags)">
-              <Space wrap style={{ marginBottom: 8 }}>
-                {requiredTags.map((t) => (
-                  <Tag key={t} closable onClose={() => removeChip(t, requiredTags, setRequiredTags)} color="blue">
-                    {t}
-                  </Tag>
-                ))}
-              </Space>
-              <Space.Compact style={{ width: '100%' }}>
-                <Input
-                  value={reqInput}
-                  onChange={(e) => setReqInput(e.target.value)}
-                  onPressEnter={() => addChip(reqInput, requiredTags, setRequiredTags, setReqInput)}
-                  placeholder="태그 이름 입력 후 Enter"
-                  style={{ fontFamily: 'monospace' }}
-                />
-                <Button onClick={() => addChip(reqInput, requiredTags, setRequiredTags, setReqInput)}>
-                  추가
-                </Button>
-              </Space.Compact>
-            </Form.Item>
-
-            {/* 제외 태그 */}
-            <Form.Item label="제외 태그 (excludeTags)">
-              <Space wrap style={{ marginBottom: 8 }}>
-                {excludeTags.map((t) => (
-                  <Tag key={t} closable onClose={() => removeChip(t, excludeTags, setExcludeTags)} color="red">
-                    {t}
-                  </Tag>
-                ))}
-              </Space>
-              <Space.Compact style={{ width: '100%' }}>
-                <Input
-                  value={excInput}
-                  onChange={(e) => setExcInput(e.target.value)}
-                  onPressEnter={() => addChip(excInput, excludeTags, setExcludeTags, setExcInput)}
-                  placeholder="태그 이름 입력 후 Enter"
-                  style={{ fontFamily: 'monospace' }}
-                />
-                <Button onClick={() => addChip(excInput, excludeTags, setExcludeTags, setExcInput)}>
-                  추가
-                </Button>
-              </Space.Compact>
-            </Form.Item>
           </Card>
 
           {/* ── 코드 예시 ────────────────────────────────────────────────── */}
           <Card title="코드 예시" style={{ marginBottom: 16 }}>
+            {/* ⑥ Monaco Java Editor */}
             <Row gutter={16}>
-              <Col xs={24} sm={12}>
-                <Form.Item label="위반 코드 예시 (problematicCode)">
-                  <TextArea
-                    rows={5}
-                    placeholder="위반 코드 예시 (Java)"
-                    style={{ fontFamily: 'monospace', fontSize: 12 }}
-                    value={form.getFieldValue('problematicCode') ?? ''}
-                    onChange={(e) => form.setFieldValue('problematicCode', e.target.value || null)}
+              <Col xs={24} lg={12}>
+                <Form.Item style={{ marginBottom: 12 }}>
+                  <JavaCodeEditor
+                    label="위반 코드 예시 (problematicCode)"
+                    value={problematicCode}
+                    onChange={setProblematicCode}
+                    placeholder="// 위반 코드 예시를 입력하세요"
                   />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={12}>
-                <Form.Item label="수정된 코드 예시 (fixedCode)">
-                  <TextArea
-                    rows={5}
-                    placeholder="수정된 코드 예시 (Java)"
-                    style={{ fontFamily: 'monospace', fontSize: 12 }}
-                    value={form.getFieldValue('fixedCode') ?? ''}
-                    onChange={(e) => form.setFieldValue('fixedCode', e.target.value || null)}
+              <Col xs={24} lg={12}>
+                <Form.Item style={{ marginBottom: 12 }}>
+                  <JavaCodeEditor
+                    label="수정된 코드 예시 (fixedCode)"
+                    value={fixedCode}
+                    onChange={setFixedCode}
+                    placeholder="// 수정된 코드 예시를 입력하세요"
                   />
                 </Form.Item>
               </Col>
             </Row>
-
-            <Form.Item label="안티 패턴 (antiPatterns)">
-              <PatternEditor label="안티 패턴" value={antiPatterns} onChange={setAntiPatterns} />
-            </Form.Item>
-
-            <Form.Item label="올바른 패턴 (goodPatterns)">
-              <PatternEditor label="올바른 패턴" value={goodPatterns} onChange={setGoodPatterns} />
-            </Form.Item>
+            <Row gutter={16}>
+              <Col xs={24} lg={12}>
+                <Form.Item label="안티 패턴 (antiPatterns)">
+                  <PatternEditor label="안티 패턴" value={antiPatterns} onChange={setAntiPatterns} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} lg={12}>
+                <Form.Item label="올바른 패턴 (goodPatterns)">
+                  <PatternEditor label="올바른 패턴" value={goodPatterns} onChange={setGoodPatterns} />
+                </Form.Item>
+              </Col>
+            </Row>
           </Card>
 
           {/* ── 키워드 ──────────────────────────────────────────────────── */}
@@ -692,7 +1036,7 @@ export default function RuleEditPage() {
                 </Tag>
               ))}
             </Space>
-            <Space.Compact style={{ width: '100%', maxWidth: 400 }}>
+            <Space.Compact style={{ width: '100%', maxWidth: 480 }}>
               <Input
                 value={kwInput}
                 onChange={(e) => setKwInput(e.target.value)}

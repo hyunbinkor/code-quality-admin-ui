@@ -1,12 +1,19 @@
 /**
  * src/stores/dataStore.ts
  *
- * 규칙·태그 데이터 및 버전 관리 Zustand 스토어.
+ * 규칙·태그 데이터 + 버전 정보를 관리하는 Zustand 스토어.
  * Pull / 태그·규칙 CRUD / Push 성공 후 버전 갱신 포함.
  *
  * [Fix] useVersionInfo / useDataStatus 셀렉터에 useShallow 래퍼 적용 (Zustand v5).
  *   - v5에서 두 번째 equalityFn 인자가 제거됨.
  *   - 객체를 반환하는 셀렉터는 반드시 useShallow()로 감싸야 무한 리렌더를 막을 수 있음.
+ *
+ * ─── 버그 수정 ────────────────────────────────────────────────────────────────
+ * [Fix] addRule()에 스토어 레벨 중복 ruleId 방어 추가
+ *   - 수정 전: 폼 validator에만 의존 → 빠른 더블클릭·JSON 에디터 경유 시
+ *              동일 ruleId 규칙이 배열에 2개 이상 삽입 가능
+ *              → Push 시 Qdrant에 마지막 값만 남아 Pull 후 엉뚱한 Diff 발생
+ *   - 수정 후: set() 호출 전 some()으로 중복 체크 → 중복이면 warn 후 return
  */
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
@@ -27,19 +34,19 @@ import { EMPTY_TAG_DATA } from '@/types/tag';
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface DataState {
-  rules:        Rule[];
-  tags:         TagData;
-  baseVersion:  number | null;
-  lastPullAt:   string | null;
-  lastPushAt:   string | null;
-  isLoading:    boolean;
-  isHydrated:   boolean;
-  error:        string | null;
+  rules:       Rule[];
+  tags:        TagData;
+  baseVersion: number | null;
+  lastPullAt:  string | null;
+  lastPushAt:  string | null;
+  isLoading:   boolean;
+  isHydrated:  boolean;
+  error:       string | null;
 }
 
 interface DataActions {
-  pull:      () => Promise<void>;
-  hydrate:   () => Promise<void>;
+  pull:    () => Promise<void>;
+  hydrate: () => Promise<void>;
 
   // 규칙 CRUD
   addRule:    (rule: Rule) => void;
@@ -47,8 +54,8 @@ interface DataActions {
   deleteRule: (ruleId: string) => void;
 
   // 태그 CRUD
-  upsertTag:  (name: string, tag: TagDefinition) => void;
-  deleteTag:  (name: string) => void;
+  upsertTag: (name: string, tag: TagDefinition) => void;
+  deleteTag: (name: string) => void;
 
   // 복합 태그 CRUD
   upsertCompoundTag: (name: string, tag: CompoundTag) => void;
@@ -64,8 +71,8 @@ interface DataActions {
   // Push 성공 후 버전 갱신
   applyPushSuccess: (newVersion: number, pushedAt: string) => Promise<void>;
 
-  clearError:      () => void;
-  persistCurrent:  () => Promise<void>;
+  clearError:     () => void;
+  persistCurrent: () => Promise<void>;
 }
 
 type DataStore = DataState & DataActions;
@@ -132,7 +139,21 @@ export const useDataStore = create<DataStore>((set, get) => ({
   },
 
   // ── 규칙 CRUD ──────────────────────────────────────────────────────────────
+
+  /**
+   * 규칙 추가
+   *
+   * [Fix] 스토어 레벨 중복 ruleId 방어
+   *   - 폼 validator는 렌더 시점에만 체크 → 빠른 더블클릭이나 JSON 에디터 경유 시
+   *     동일 ruleId 규칙이 배열에 두 개 삽입될 수 있음
+   *   - 중복 시 warn 로그를 남기고 무시 (데이터 정합성 보호)
+   */
   addRule: (rule) => {
+    const duplicate = get().rules.some((r) => r.ruleId === rule.ruleId);
+    if (duplicate) {
+      console.warn(`[dataStore] addRule: 중복 ruleId 무시 → "${rule.ruleId}"`);
+      return;
+    }
     set((s) => ({ rules: [...s.rules, rule] }));
     get().persistCurrent().catch(console.error);
   },
