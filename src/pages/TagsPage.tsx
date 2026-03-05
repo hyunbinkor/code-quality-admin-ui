@@ -8,6 +8,10 @@
  * - 태그 추가/수정/삭제 (로컬 스토어)
  * - tagCategories 표시 및 편집
  * - 태그 분할 / 병합 (TagSplit, TagMerge)
+ *
+ * 버그 수정:
+ *   - tagCount === 0 상태(Pull 전)에서 Pull 중 로딩 표시 안 되던 문제
+ *     → <Empty>를 <Spin>으로 감싸 해결 (Table이 없으면 loading prop 효과 없음)
  */
 import { useState, useMemo } from 'react';
 import {
@@ -29,6 +33,7 @@ import {
   Tooltip,
   Empty,
   Divider,
+  Spin,             // ← 추가
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -81,12 +86,12 @@ const DETECTION_TYPE_COLORS: Record<string, string> = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface TagModalProps {
-  open: boolean;
-  tagName: string | null;
-  initial?: TagDefinition;
+  open:       boolean;
+  tagName:    string | null;
+  initial?:   TagDefinition;
   categories: string[];
-  onOk: (name: string, tag: TagDefinition) => void;
-  onCancel: () => void;
+  onOk:       (name: string, tag: TagDefinition) => void;
+  onCancel:   () => void;
 }
 
 function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagModalProps) {
@@ -98,15 +103,15 @@ function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagMod
     if (type === 'regex') {
       const raw = (values.patterns as string) ?? '';
       return {
-        type: 'regex' as const,
-        patterns: raw.split('\n').map((p: string) => p.trim()).filter(Boolean),
+        type:      'regex' as const,
+        patterns:  raw.split('\n').map((p: string) => p.trim()).filter(Boolean),
         matchType: (values.matchType as 'any' | 'all' | 'none') ?? 'any',
       };
     }
     if (type === 'llm') {
       return {
-        type: 'llm' as const,
-        criteria: (values.criteria as string) ?? '',
+        type:        'llm' as const,
+        criteria:    (values.criteria as string) ?? '',
         triggerTags: ((values.triggerTags as string) ?? '')
           .split(',').map((t: string) => t.trim()).filter(Boolean),
       };
@@ -116,7 +121,7 @@ function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagMod
 
   const handleOk = async () => {
     try {
-      const values = await form.validateFields();
+      const values    = await form.validateFields();
       const detection = buildDetection(values);
       const tag: TagDefinition = {
         category:         values.category,
@@ -133,10 +138,10 @@ function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagMod
   const getInitialValues = () => {
     if (!initial) {
       return {
-        tier: 1,
+        tier:             1,
         extractionMethod: 'regex',
-        detectionType: 'regex',
-        matchType: 'any',
+        detectionType:    'regex',
+        matchType:        'any',
       };
     }
     const d = initial.detection;
@@ -162,7 +167,7 @@ function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagMod
       okText="저장"
       cancelText="취소"
       width={600}
-      destroyOnHidden
+      destroyOnClose
     >
       <Form form={form} layout="vertical" initialValues={getInitialValues()}>
         {isNew && (
@@ -268,10 +273,10 @@ function TagModal({ open, tagName, initial, categories, onOk, onCancel }: TagMod
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CompoundTagModalProps {
-  open: boolean;
-  tagName: string | null;
+  open:     boolean;
+  tagName:  string | null;
   initial?: CompoundTag;
-  onOk: (name: string, tag: CompoundTag) => void;
+  onOk:     (name: string, tag: CompoundTag) => void;
   onCancel: () => void;
 }
 
@@ -313,7 +318,7 @@ function CompoundTagModal({ open, tagName, initial, onOk, onCancel }: CompoundTa
       okText="저장"
       cancelText="취소"
       width={520}
-      destroyOnHidden
+      destroyOnClose
     >
       <Form form={form} layout="vertical" initialValues={getInitialValues()}>
         {isNew && (
@@ -368,10 +373,10 @@ function CompoundTagModal({ open, tagName, initial, onOk, onCancel }: CompoundTa
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CategoryModalProps {
-  open: boolean;
-  catId: string | null;
+  open:     boolean;
+  catId:    string | null;
   initial?: string;
-  onOk: (id: string, description: string) => void;
+  onOk:     (id: string, description: string) => void;
   onCancel: () => void;
 }
 
@@ -396,7 +401,7 @@ function CategoryModal({ open, catId, initial, onOk, onCancel }: CategoryModalPr
       okText="저장"
       cancelText="취소"
       width={400}
-      destroyOnHidden
+      destroyOnClose
     >
       <Form
         form={form}
@@ -433,14 +438,12 @@ export default function TagsPage() {
   const notifySuccess     = useUiStore((s) => s.notifySuccess);
   const notifyError       = useUiStore((s) => s.notifyError);
 
-  // ── 모달 상태 ─────────────────────────────────────────────────────────────
   const [tagModal, setTagModal]           = useState<{ open: boolean; name: string | null }>({ open: false, name: null });
   const [compoundModal, setCompoundModal] = useState<{ open: boolean; name: string | null }>({ open: false, name: null });
   const [categoryModal, setCategoryModal] = useState<{ open: boolean; id: string | null }>({ open: false, id: null });
   const [splitOpen, setSplitOpen]         = useState(false);
   const [mergeOpen, setMergeOpen]         = useState(false);
 
-  // ── 카테고리별 태그 그룹핑 ────────────────────────────────────────────────
   const tagsByCategory = useMemo(() => {
     const map: Record<string, Array<{ name: string; def: TagDefinition }>> = {};
     Object.entries(tags.tags).forEach(([name, def]) => {
@@ -455,7 +458,6 @@ export default function TagsPage() {
   const tagCount      = Object.keys(tags.tags).length;
   const compoundCount = Object.keys(tags.compoundTags).length;
 
-  // ── Pull ──────────────────────────────────────────────────────────────────
   const handlePull = async () => {
     try {
       await pull();
@@ -465,41 +467,37 @@ export default function TagsPage() {
     }
   };
 
-  // ── 태그 저장 ─────────────────────────────────────────────────────────────
   const handleTagOk = (name: string, tag: TagDefinition) => {
     upsertTag(name, tag);
     notifySuccess('저장 완료', `태그 ${name}이(가) 저장되었습니다.`);
     setTagModal({ open: false, name: null });
   };
 
-  // ── 복합 태그 저장 ────────────────────────────────────────────────────────
   const handleCompoundOk = (name: string, tag: CompoundTag) => {
     upsertCompoundTag(name, tag);
     notifySuccess('저장 완료', `복합 태그 ${name}이(가) 저장되었습니다.`);
     setCompoundModal({ open: false, name: null });
   };
 
-  // ── 카테고리 저장 ─────────────────────────────────────────────────────────
   const handleCategoryOk = (id: string, description: string) => {
     upsertTagCategory(id, description);
     notifySuccess('저장 완료', `카테고리 ${id}이(가) 저장되었습니다.`);
     setCategoryModal({ open: false, id: null });
   };
 
-  // ── 태그 테이블 컬럼 ──────────────────────────────────────────────────────
   const tagColumns: ColumnsType<{ name: string; def: TagDefinition }> = [
     {
-      title: '태그 이름',
+      title:     '태그 이름',
       dataIndex: 'name',
-      key: 'name',
-      width: 200,
+      key:       'name',
+      width:     200,
       render: (name: string) => (
         <Text code style={{ fontSize: 12 }}>{name}</Text>
       ),
     },
     {
       title: 'Tier',
-      key: 'tier',
+      key:   'tier',
       width: 130,
       render: (_, { def }) => (
         <Tag color={TIER_COLORS[def.tier] ?? 'default'} style={{ fontSize: 11 }}>
@@ -509,7 +507,7 @@ export default function TagsPage() {
     },
     {
       title: '추출 방식',
-      key: 'extractionMethod',
+      key:   'extractionMethod',
       width: 90,
       render: (_, { def }) => (
         <Tag color={EXTRACTION_COLORS[def.extractionMethod]} style={{ fontSize: 11 }}>
@@ -519,7 +517,7 @@ export default function TagsPage() {
     },
     {
       title: '탐지 타입',
-      key: 'detectionType',
+      key:   'detectionType',
       width: 100,
       render: (_, { def }) => (
         <Tag
@@ -531,8 +529,8 @@ export default function TagsPage() {
       ),
     },
     {
-      title: '설명',
-      key: 'description',
+      title:   '설명',
+      key:     'description',
       ellipsis: true,
       render: (_, { def }) => (
         <Text style={{ fontSize: 13 }}>{def.description}</Text>
@@ -540,7 +538,7 @@ export default function TagsPage() {
     },
     {
       title: '',
-      key: 'actions',
+      key:   'actions',
       width: 80,
       align: 'center' as const,
       render: (_, { name, def }) => (
@@ -564,19 +562,13 @@ export default function TagsPage() {
             cancelText="취소"
             okButtonProps={{ danger: true }}
           >
-            <Button
-              type="text"
-              danger
-              size="small"
-              icon={<DeleteOutlined />}
-            />
+            <Button type="text" danger size="small" icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
     },
   ];
 
-  // ── Collapse 패널 ─────────────────────────────────────────────────────────
   const collapseItems = Object.entries(tagsByCategory).map(([category, items]) => {
     const categoryLabel = tags.tagCategories[category] ?? category;
     return {
@@ -596,23 +588,21 @@ export default function TagsPage() {
           size="small"
           pagination={false}
           scroll={{ x: 700 }}
+          loading={isLoading}
         />
       ),
     };
   });
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 렌더
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div>
       {/* ── 타이틀 + 액션 버튼 ───────────────────────────────────────────── */}
       <div
         style={{
-          display: 'flex',
+          display:        'flex',
           justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 16,
+          alignItems:     'center',
+          marginBottom:   16,
         }}
       >
         <Space align="center">
@@ -690,8 +680,21 @@ export default function TagsPage() {
       </Card>
 
       {/* ── 태그 목록 (카테고리별 Collapse) ─────────────────────────────── */}
+      {/*
+        Fix: tagCount === 0 일 때 Table이 없으므로 loading prop 효과 없음
+        → <Spin>으로 Empty를 감싸 Pull 중 로딩 표시
+      */}
       {tagCount === 0 ? (
-        <Empty description="Pull을 실행하여 서버에서 태그를 불러오세요." />
+        <Spin spinning={isLoading}>
+          <Empty
+            description={
+              isLoading
+                ? '서버에서 태그를 불러오는 중...'
+                : 'Pull을 실행하여 서버에서 태그를 불러오세요.'
+            }
+            style={{ padding: '48px 0' }}
+          />
+        </Spin>
       ) : (
         <Collapse
           items={collapseItems}
@@ -705,10 +708,10 @@ export default function TagsPage() {
       {/* ── 복합 태그 섹션 ────────────────────────────────────────────────── */}
       <div
         style={{
-          display: 'flex',
+          display:        'flex',
           justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 12,
+          alignItems:     'center',
+          marginBottom:   12,
         }}
       >
         <Space>
@@ -724,7 +727,14 @@ export default function TagsPage() {
       </div>
 
       {compoundCount === 0 ? (
-        <Empty description="복합 태그가 없습니다." />
+        <Spin spinning={isLoading}>
+          <Empty description={
+            isLoading
+              ? '서버에서 복합 태그를 불러오는 중...'
+              : "복합 태그가 없습니다."
+              }
+              style={{ padding: '24px 0' }} />
+        </Spin>
       ) : (
         <Row gutter={[12, 12]}>
           {Object.entries(tags.compoundTags).map(([name, ct]) => (
@@ -752,20 +762,12 @@ export default function TagsPage() {
                       cancelText="취소"
                       okButtonProps={{ danger: true }}
                     >
-                      <Button
-                        type="text"
-                        danger
-                        size="small"
-                        icon={<DeleteOutlined />}
-                      />
+                      <Button type="text" danger size="small" icon={<DeleteOutlined />} />
                     </Popconfirm>
                   </Space>
                 }
               >
-                <Text
-                  type="secondary"
-                  style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
-                >
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
                   {ct.description}
                 </Text>
 

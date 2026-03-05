@@ -5,11 +5,9 @@
  * - 폼 모드 (Ant Design Form) ↔ JSON 에디터 모드 (Monaco) 전환
  * - 신규 규칙 추가 (/rules/new) 및 기존 규칙 편집 (/rules/:id)
  *
- * Step 14 변경사항:
- *   - isHydrated 가드: hydrate 중이면 전체 스피너 표시
- *   - baseVersion 가드: 데이터 미로드 상태에서 편집 접근 시 "Pull 먼저" 안내
- *     (신규 규칙 생성은 로컬 작업이라 허용하되, 경고 배너 표시)
- *   - 미사용 import 정리
+ * 버그 수정:
+ *   - 존재하지 않는 ruleId 접근 시 즉시 navigate → 깜빡임 + 안내 메시지 미표시
+ *     → notFound 상태로 전환 후 Result 404 화면을 선언적으로 렌더
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -69,7 +67,6 @@ interface PatternItem {
 
 const EMPTY_PATTERN: PatternItem = { pattern: '', flags: 'g', description: '' };
 
-/** 신규 규칙 기본값 */
 const DEFAULT_RULE: Rule = {
   ruleId:          '',
   sectionNumber:   '',
@@ -119,10 +116,7 @@ function PatternEditor({ label, value, onChange }: PatternEditorProps) {
   const add    = () => onChange([...value, { ...EMPTY_PATTERN }]);
   const remove = (idx: number) => onChange(value.filter((_, i) => i !== idx));
   const update = (idx: number, field: keyof PatternItem, val: string) => {
-    const next = value.map((item, i) =>
-      i === idx ? { ...item, [field]: val } : item,
-    );
-    onChange(next);
+    onChange(value.map((item, i) => i === idx ? { ...item, [field]: val } : item));
   };
 
   return (
@@ -132,19 +126,9 @@ function PatternEditor({ label, value, onChange }: PatternEditorProps) {
           key={idx}
           size="small"
           style={{ marginBottom: 8, background: '#fafafa' }}
-          title={
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {label} #{idx + 1}
-            </Text>
-          }
+          title={<Text type="secondary" style={{ fontSize: 12 }}>{label} #{idx + 1}</Text>}
           extra={
-            <Button
-              type="text"
-              danger
-              size="small"
-              icon={<DeleteOutlined />}
-              onClick={() => remove(idx)}
-            />
+            <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => remove(idx)} />
           }
         >
           <Row gutter={8}>
@@ -178,13 +162,7 @@ function PatternEditor({ label, value, onChange }: PatternEditorProps) {
           </Form.Item>
         </Card>
       ))}
-      <Button
-        type="dashed"
-        icon={<PlusOutlined />}
-        onClick={add}
-        size="small"
-        style={{ width: '100%' }}
-      >
+      <Button type="dashed" icon={<PlusOutlined />} onClick={add} size="small" style={{ width: '100%' }}>
         {label} 추가
       </Button>
     </div>
@@ -221,8 +199,10 @@ export default function RuleEditPage() {
   const [kwInput, setKwInput]   = useState('');
   const [reqInput, setReqInput] = useState('');
   const [excInput, setExcInput] = useState('');
+  // Fix: navigate 즉시 실행 대신 notFound 상태로 선언적 렌더
+  const [notFound, setNotFound] = useState(false);
 
-  // ── 초기 데이터 로드 ────────────────────────────────────────────────────
+  // ── 초기 데이터 로드 ─────────────────────────────────────────────────────
   const initFromRule = useCallback(
     (rule: Rule) => {
       form.setFieldsValue(rule);
@@ -248,26 +228,19 @@ export default function RuleEditPage() {
     } else {
       const found = rules.find((r) => r.ruleId === id);
       if (found) {
+        setNotFound(false);
         initFromRule(found);
       } else if (isHydrated && rules.length > 0) {
-        // hydrate 완료 후에도 못 찾으면 목록으로 이동
-        notifyError('규칙을 찾을 수 없습니다.', `ruleId: ${id}`);
-        navigate('/rules');
+        // Fix: navigate 즉시 실행 제거 → notFound 상태 전환으로 Result 화면 표시
+        setNotFound(true);
       }
     }
-  }, [id, isNew, rules, isHydrated, form, initFromRule, navigate, notifyError]);
+  }, [id, isNew, rules, isHydrated, form, initFromRule]);
 
   // ── 모드 전환: 폼 → JSON ─────────────────────────────────────────────────
   const switchToJson = () => {
-    const values  = form.getFieldsValue(true) as Rule;
-    const merged: Rule = {
-      ...values,
-      keywords,
-      requiredTags,
-      excludeTags,
-      antiPatterns,
-      goodPatterns,
-    };
+    const values = form.getFieldsValue(true) as Rule;
+    const merged: Rule = { ...values, keywords, requiredTags, excludeTags, antiPatterns, goodPatterns };
     setJsonValue(JSON.stringify(merged, null, 2));
     setJsonError(null);
     setMode('json');
@@ -309,7 +282,7 @@ export default function RuleEditPage() {
       return;
     }
 
-    const values  = form.getFieldsValue(true) as Rule;
+    const values = form.getFieldsValue(true) as Rule;
     const rule: Rule = {
       ...values,
       keywords,
@@ -365,7 +338,7 @@ export default function RuleEditPage() {
 
   const handleSave = () => (mode === 'form' ? handleFormSave() : handleJsonSave());
 
-  // ── 태그 칩 입력 헬퍼 ────────────────────────────────────────────────────
+  // ── 태그 칩 헬퍼 ─────────────────────────────────────────────────────────
   const addChip = (
     val: string,
     list: string[],
@@ -377,42 +350,27 @@ export default function RuleEditPage() {
     setInput('');
   };
 
-  const removeChip = (
-    chip: string,
-    list: string[],
-    setList: (v: string[]) => void,
-  ) => setList(list.filter((t) => t !== chip));
+  const removeChip = (chip: string, list: string[], setList: (v: string[]) => void) =>
+    setList(list.filter((t) => t !== chip));
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ── 가드 1: hydrate 중 스피너 ────────────────────────────────────────────
+  // 가드 1: hydrate 중 스피너
   // ─────────────────────────────────────────────────────────────────────────
   if (!isHydrated || isLoading) {
     return (
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '60vh',
-        }}
-      >
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
         <Spin size="large" tip="데이터 불러오는 중..." />
       </div>
     );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ── 가드 2: 편집 모드에서 데이터 미로드 (Pull 안 함) ─────────────────────
-  //    신규 규칙 생성은 로컬 작업이므로 허용 (경고 배너만 표시)
+  // 가드 2: Pull 안 한 상태에서 편집 접근
   // ─────────────────────────────────────────────────────────────────────────
   if (!isNew && baseVersion === null) {
     return (
       <div>
-        <Button
-          icon={<ArrowLeftOutlined />}
-          onClick={() => navigate('/rules')}
-          style={{ marginBottom: 24 }}
-        >
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/rules')} style={{ marginBottom: 24 }}>
           목록으로
         </Button>
         <Result
@@ -420,13 +378,41 @@ export default function RuleEditPage() {
           title="데이터를 먼저 불러와야 합니다"
           subTitle="규칙을 편집하려면 서버에서 최신 데이터를 Pull 해주세요."
           extra={
-            <Button
-              type="primary"
-              icon={<SyncOutlined />}
-              onClick={() => navigate('/sync')}
-            >
+            <Button type="primary" icon={<SyncOutlined />} onClick={() => navigate('/sync')}>
               동기화 페이지로 이동
             </Button>
+          }
+        />
+      </div>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 가드 3: 존재하지 않는 ruleId — Fix: navigate 대신 Result 404 렌더
+  // ─────────────────────────────────────────────────────────────────────────
+  if (notFound) {
+    return (
+      <div>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/rules')} style={{ marginBottom: 24 }}>
+          목록으로
+        </Button>
+        <Result
+          status="404"
+          title="규칙을 찾을 수 없습니다"
+          subTitle={
+            <span>
+              <Text code>{id}</Text> 에 해당하는 규칙이 로컬 데이터에 없습니다.
+              <br />
+              Pull을 실행하거나 규칙 ID를 확인해주세요.
+            </span>
+          }
+          extra={
+            <Space>
+              <Button onClick={() => navigate('/rules')}>목록으로</Button>
+              <Button type="primary" icon={<SyncOutlined />} onClick={() => navigate('/sync')}>
+                동기화 페이지
+              </Button>
+            </Space>
           }
         />
       </div>
@@ -439,35 +425,23 @@ export default function RuleEditPage() {
   return (
     <div>
       {/* ── 헤더 ──────────────────────────────────────────────────────────── */}
-      <div
-        style={{
-          display:        'flex',
-          alignItems:     'center',
-          justifyContent: 'space-between',
-          marginBottom:   24,
-        }}
-      >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/rules')}>
-            목록
-          </Button>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/rules')}>목록</Button>
           <Title level={4} style={{ margin: 0 }}>
             {isNew ? '새 규칙 추가' : `규칙 편집: ${id}`}
           </Title>
         </Space>
-
         <Space>
           <Segmented
             value={mode}
             onChange={handleModeChange}
             options={[
-              { label: <Space><FormOutlined />폼</Space>,         value: 'form' },
-              { label: <Space><CodeOutlined />JSON 에디터</Space>, value: 'json' },
+              { label: <Space><FormOutlined />폼</Space>,          value: 'form' },
+              { label: <Space><CodeOutlined />JSON 에디터</Space>,  value: 'json' },
             ]}
           />
-          <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>
-            저장
-          </Button>
+          <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>저장</Button>
         </Space>
       </div>
 
@@ -476,18 +450,17 @@ export default function RuleEditPage() {
         <Alert
           type="warning"
           showIcon
-          title="Pull 데이터 없음"
+          message="Pull 데이터 없음"
           description="로컬에 서버 데이터가 없습니다. 규칙을 추가할 수 있지만, 서버에 반영하려면 나중에 Pull → Push 순서로 진행하세요."
           closable
           style={{ marginBottom: 16 }}
         />
       )}
 
-      {/* ── JSON 에러 알림 ─────────────────────────────────────────────────── */}
       {jsonError && (
         <Alert
           type="error"
-          title={jsonError}
+          message={jsonError}
           closable
           onClose={() => setJsonError(null)}
           style={{ marginBottom: 16 }}
@@ -528,11 +501,7 @@ export default function RuleEditPage() {
                 </Form.Item>
               </Col>
               <Col xs={24} sm={12}>
-                <Form.Item
-                  name="title"
-                  label="제목"
-                  rules={[{ required: true, message: '제목은 필수입니다.' }]}
-                >
+                <Form.Item name="title" label="제목" rules={[{ required: true, message: '제목은 필수입니다.' }]}>
                   <Input placeholder="규칙 제목" />
                 </Form.Item>
               </Col>
@@ -606,7 +575,7 @@ export default function RuleEditPage() {
             </Row>
           </Card>
 
-          {/* ── 태그 / 검사 설정 ───────────────────────────────────────── */}
+          {/* ── 태그 / 검사 설정 ─────────────────────────────────────────── */}
           <Card title="태그 / 검사 설정" style={{ marginBottom: 16 }}>
             <Row gutter={16}>
               <Col xs={24} sm={12}>
@@ -635,12 +604,7 @@ export default function RuleEditPage() {
             <Form.Item label="필수 태그 (requiredTags)">
               <Space wrap style={{ marginBottom: 8 }}>
                 {requiredTags.map((t) => (
-                  <Tag
-                    key={t}
-                    closable
-                    onClose={() => removeChip(t, requiredTags, setRequiredTags)}
-                    color="blue"
-                  >
+                  <Tag key={t} closable onClose={() => removeChip(t, requiredTags, setRequiredTags)} color="blue">
                     {t}
                   </Tag>
                 ))}
@@ -663,12 +627,7 @@ export default function RuleEditPage() {
             <Form.Item label="제외 태그 (excludeTags)">
               <Space wrap style={{ marginBottom: 8 }}>
                 {excludeTags.map((t) => (
-                  <Tag
-                    key={t}
-                    closable
-                    onClose={() => removeChip(t, excludeTags, setExcludeTags)}
-                    color="red"
-                  >
+                  <Tag key={t} closable onClose={() => removeChip(t, excludeTags, setExcludeTags)} color="red">
                     {t}
                   </Tag>
                 ))}
@@ -740,9 +699,7 @@ export default function RuleEditPage() {
                 onPressEnter={() => addChip(kwInput, keywords, setKeywords, setKwInput)}
                 placeholder="키워드 입력 후 Enter"
               />
-              <Button onClick={() => addChip(kwInput, keywords, setKeywords, setKwInput)}>
-                추가
-              </Button>
+              <Button onClick={() => addChip(kwInput, keywords, setKeywords, setKwInput)}>추가</Button>
             </Space.Compact>
           </Card>
         </Form>
@@ -767,12 +724,12 @@ export default function RuleEditPage() {
             value={jsonValue}
             onChange={(v) => setJsonValue(v ?? '')}
             options={{
-              minimap:             { enabled: false },
-              fontSize:            13,
-              tabSize:             2,
-              wordWrap:            'on',
+              minimap:              { enabled: false },
+              fontSize:             13,
+              tabSize:              2,
+              wordWrap:             'on',
               scrollBeyondLastLine: false,
-              automaticLayout:     true,
+              automaticLayout:      true,
             }}
           />
         </Card>
