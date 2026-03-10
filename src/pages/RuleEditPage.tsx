@@ -12,6 +12,12 @@
  * 변경사항 ⑤: tagCondition → 태그/연산자 클릭 보조 버튼
  * 변경사항 ⑥: problematicCode / fixedCode → Monaco Editor (Java)
  * 변경사항 ⑦: 출처 필드를 기본 정보 Card로 통합, Form 최대 폭 1600으로 확장
+ *
+ * [Fix] 로컬 CATEGORY_ABBR 상수 제거 → rule.ts의 RULE_CATEGORY_ABBR import
+ *   - 수정 전: RuleEditPage 내부에 9개짜리 CATEGORY_ABBR 로컬 상수 정의
+ *              → 신규 카테고리 7개 누락으로 TypeScript Record 타입 불일치 에러
+ *   - 수정 후: rule.ts의 RULE_CATEGORY_ABBR (16개) import하여 사용
+ *              이후 카테고리 추가 시 rule.ts 한 곳만 수정하면 됨
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -53,6 +59,7 @@ import { useUiStore } from '@/stores/uiStore';
 import type { Rule, RuleCategory, RuleSeverity, RuleCheckType } from '@/types/rule';
 import {
   RULE_CATEGORY_LABELS,
+  RULE_CATEGORY_ABBR,      // [Fix] 로컬 상수 삭제 후 여기서 import
   RULE_SEVERITY_LABELS,
   RULE_SEVERITY_COLORS,
   RULE_CHECK_TYPE_LABELS,
@@ -75,19 +82,6 @@ interface PatternItem {
 }
 
 const EMPTY_PATTERN: PatternItem = { pattern: '', flags: 'g', description: '' };
-
-// ④ 카테고리 → ruleId 약자 매핑
-const CATEGORY_ABBR: Record<RuleCategory, string> = {
-  resource_management: 'RES',
-  security:            'SEC',
-  exception_handling:  'ERR',
-  performance:         'PERF',
-  architecture:        'ARCH',
-  code_style:          'STY',
-  naming_convention:   'NAM',
-  documentation:       'DOC',
-  general:             'GEN',
-};
 
 // ⑤ tagCondition 연산자 버튼 목록
 const TAG_OPERATORS = [
@@ -192,7 +186,6 @@ function JavaCodeEditor({ label, value, onChange, placeholder }: JavaCodeEditorP
           position:     'relative',
         }}
       >
-        {/* 빈 값일 때 placeholder 오버레이 */}
         {value === '' && (
           <div
             style={{
@@ -246,7 +239,13 @@ function PatternEditor({ label, value, onChange }: PatternEditorProps) {
           style={{ marginBottom: 8, background: '#fafafa' }}
           title={<Text type="secondary" style={{ fontSize: 12 }}>{label} #{idx + 1}</Text>}
           extra={
-            <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => remove(idx)} />
+            <Button
+              type="text"
+              danger
+              size="small"
+              icon={<DeleteOutlined />}
+              onClick={() => remove(idx)}
+            />
           }
         >
           <Row gutter={8}>
@@ -280,7 +279,13 @@ function PatternEditor({ label, value, onChange }: PatternEditorProps) {
           </Form.Item>
         </Card>
       ))}
-      <Button type="dashed" icon={<PlusOutlined />} onClick={add} size="small" style={{ width: '100%' }}>
+      <Button
+        type="dashed"
+        icon={<PlusOutlined />}
+        onClick={add}
+        size="small"
+        style={{ width: '100%' }}
+      >
         {label} 추가
       </Button>
     </div>
@@ -315,7 +320,6 @@ export default function RuleEditPage() {
   const [goodPatterns, setGoodPatterns]       = useState<PatternItem[]>([]);
   const [kwInput, setKwInput]                 = useState('');
   const [notFound, setNotFound]               = useState(false);
-  // ⑥ 코드 예시 전용 state (Monaco는 null 불가)
   const [problematicCode, setProblematicCode] = useState<string>('');
   const [fixedCode, setFixedCode]             = useState<string>('');
 
@@ -393,6 +397,10 @@ export default function RuleEditPage() {
 
   // ─────────────────────────────────────────────────────────────────────────
   // ④ ruleId 자동 생성
+  //
+  // [Fix] CATEGORY_ABBR(로컬 9개) → RULE_CATEGORY_ABBR(rule.ts 16개)
+  //   신규 카테고리(validation, business_logic 등)가 선택된 상태에서도
+  //   올바른 약어로 ruleId를 자동 생성할 수 있게 됨
   // ─────────────────────────────────────────────────────────────────────────
   const handleAutoRuleId = () => {
     const prefix   = (form.getFieldValue('sourcePrefix') as string)?.trim();
@@ -412,7 +420,8 @@ export default function RuleEditPage() {
       return;
     }
 
-    const abbr        = CATEGORY_ABBR[category] ?? 'GEN';
+    // [Fix] RULE_CATEGORY_ABBR: 16개 카테고리 전체 커버
+    const abbr        = RULE_CATEGORY_ABBR[category] ?? 'GEN';
     const sectionPart = section.replace(/\./g, '_');
     const generated   = `${prefix}.${abbr}.${sectionPart}`;
 
@@ -429,7 +438,7 @@ export default function RuleEditPage() {
   // 모드 전환
   // ─────────────────────────────────────────────────────────────────────────
   const switchToJson = () => {
-    const values   = form.getFieldsValue(true) as Rule;
+    const values  = form.getFieldsValue(true) as Rule;
     const merged: Rule = {
       ...values,
       problematicCode: problematicCode.trim() || null,
@@ -569,7 +578,7 @@ export default function RuleEditPage() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 가드 2: Pull 안 한 상태에서 편집 접근
+  // 가드 2: Pull 안 한 상태에서 기존 규칙 편집 접근
   // ─────────────────────────────────────────────────────────────────────────
   if (!isNew && baseVersion === null) {
     return (
@@ -641,7 +650,7 @@ export default function RuleEditPage() {
             value={mode}
             onChange={handleModeChange}
             options={[
-              { label: <Space><FormOutlined />폼</Space>,         value: 'form' },
+              { label: <Space><FormOutlined />폼</Space>,          value: 'form' },
               { label: <Space><CodeOutlined />JSON 에디터</Space>, value: 'json' },
             ]}
           />
@@ -671,8 +680,7 @@ export default function RuleEditPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
-          폼 모드
-          ⑦ maxWidth 1600으로 확장
+          폼 모드  (⑦ maxWidth 1600)
       ══════════════════════════════════════════════════════════════════ */}
       {mode === 'form' && (
         <Form form={form} layout="vertical" style={{ maxWidth: 1600, width: '100%' }}>
@@ -729,7 +737,11 @@ export default function RuleEditPage() {
 
               {/* 제목 */}
               <Col xs={24} sm={12} lg={16}>
-                <Form.Item name="title" label="제목" rules={[{ required: true, message: '제목은 필수입니다.' }]}>
+                <Form.Item
+                  name="title"
+                  label="제목"
+                  rules={[{ required: true, message: '제목은 필수입니다.' }]}
+                >
                   <Input placeholder="규칙 제목" />
                 </Form.Item>
               </Col>
@@ -865,7 +877,6 @@ export default function RuleEditPage() {
                     style={{ fontFamily: 'monospace' }}
                   />
                 </Form.Item>
-                {/* 연산자 버튼 행 */}
                 <div style={{ marginTop: -12, marginBottom: 8 }}>
                   <Space size={4} wrap>
                     <Text type="secondary" style={{ fontSize: 11, marginRight: 4 }}>연산자:</Text>
@@ -884,7 +895,6 @@ export default function RuleEditPage() {
                     <Button size="small" danger onClick={clearTagCondition}>지우기</Button>
                   </Space>
                 </div>
-                {/* 태그 버튼 패널 */}
                 {tagOptions.length > 0 ? (
                   <div
                     style={{
@@ -990,7 +1000,6 @@ export default function RuleEditPage() {
 
           {/* ── 코드 예시 ────────────────────────────────────────────────── */}
           <Card title="코드 예시" style={{ marginBottom: 16 }}>
-            {/* ⑥ Monaco Java Editor */}
             <Row gutter={16}>
               <Col xs={24} lg={12}>
                 <Form.Item style={{ marginBottom: 12 }}>
