@@ -15,6 +15,13 @@
  *      → pagination을 useState로 관리 + onChange 핸들러 추가
  *   3. 활성 여부 목록에서 직접 토글
  *      → isActive 컬럼 Badge → Switch로 교체
+ *
+ * UI 개선:
+ *   4. 활성 토글 설명 + 페이지네이션 레이아웃
+ *      - Table 내장 pagination 제거 → 외부 Pagination 컴포넌트로 분리
+ *      - legend(활성 설명)와 Pagination을 같은 행에 flex 배치
+ *      - 너비 부족 시: legend 위, Pagination 아래로 자연스럽게 래핑
+ *      - marginTop: 12 / marginBottom: 24 로 상하 여백 확보
  */
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -33,6 +40,7 @@ import {
   Col,
   Card,
   Badge,
+  Pagination,
 } from 'antd';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import {
@@ -84,7 +92,6 @@ export default function RulesPage() {
   const [filters, setFilters]               = useState<Filters>(INITIAL_FILTERS);
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
 
-  // Fix #2: pagination 상태로 관리
   const [pagination, setPagination] = useState<TablePaginationConfig>({
     current:  1,
     pageSize: 20,
@@ -170,7 +177,7 @@ export default function RulesPage() {
       ),
     },
     {
-      title:    '제목',
+      title:     '제목',
       dataIndex: 'title',
       key:       'title',
       ellipsis:  true,
@@ -251,11 +258,14 @@ export default function RulesPage() {
           description={`"${record.title}"을(를) 삭제하시겠습니까?`}
           onConfirm={(e) => { e?.stopPropagation(); handleDelete(record.ruleId); }}
           onCancel={(e) => e?.stopPropagation()}
-          okText="삭제" cancelText="취소"
+          okText="삭제"
+          cancelText="취소"
           okButtonProps={{ danger: true }}
         >
           <Button
-            type="text" danger size="small"
+            type="text"
+            danger
+            size="small"
             icon={<DeleteOutlined />}
             onClick={(e) => e.stopPropagation()}
           />
@@ -270,6 +280,7 @@ export default function RulesPage() {
 
   return (
     <div>
+      {/* ── 헤더 ────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Space align="center">
           <Typography.Title level={4} style={{ margin: 0 }}>규칙 관리</Typography.Title>
@@ -281,7 +292,8 @@ export default function RulesPage() {
               title="선택 항목 삭제"
               description={`선택한 ${selectedRowKeys.length}개 규칙을 삭제하시겠습니까?`}
               onConfirm={handleDeleteSelected}
-              okText="삭제" cancelText="취소"
+              okText="삭제"
+              cancelText="취소"
               okButtonProps={{ danger: true }}
             >
               <Button danger icon={<DeleteOutlined />}>
@@ -298,6 +310,7 @@ export default function RulesPage() {
         </Space>
       </div>
 
+      {/* ── 필터 ────────────────────────────────────────────────────────── */}
       <Card size="small" style={{ marginBottom: 16 }} styles={{ body: { padding: '12px 16px' } }}>
         <Row gutter={[12, 12]} align="middle">
           <Col xs={24} sm={12} lg={6}>
@@ -310,7 +323,11 @@ export default function RulesPage() {
             />
           </Col>
           <Col xs={12} sm={6} lg={4}>
-            <Select style={{ width: '100%' }} value={filters.category} onChange={(v) => setFilter('category', v)}>
+            <Select
+              style={{ width: '100%' }}
+              value={filters.category}
+              onChange={(v) => setFilter('category', v)}
+            >
               <Option value="all">전체 카테고리</Option>
               {(Object.keys(RULE_CATEGORY_LABELS) as RuleCategory[]).map((c) => (
                 <Option key={c} value={c}>{RULE_CATEGORY_LABELS[c]}</Option>
@@ -318,7 +335,11 @@ export default function RulesPage() {
             </Select>
           </Col>
           <Col xs={12} sm={6} lg={3}>
-            <Select style={{ width: '100%' }} value={filters.severity} onChange={(v) => setFilter('severity', v)}>
+            <Select
+              style={{ width: '100%' }}
+              value={filters.severity}
+              onChange={(v) => setFilter('severity', v)}
+            >
               <Option value="all">전체 심각도</Option>
               {(Object.keys(RULE_SEVERITY_LABELS) as RuleSeverity[]).map((s) => (
                 <Option key={s} value={s}>
@@ -328,7 +349,11 @@ export default function RulesPage() {
             </Select>
           </Col>
           <Col xs={12} sm={6} lg={4}>
-            <Select style={{ width: '100%' }} value={filters.checkType} onChange={(v) => setFilter('checkType', v)}>
+            <Select
+              style={{ width: '100%' }}
+              value={filters.checkType}
+              onChange={(v) => setFilter('checkType', v)}
+            >
               <Option value="all">전체 타입</Option>
               {(Object.keys(RULE_CHECK_TYPE_LABELS) as RuleCheckType[]).map((t) => (
                 <Option key={t} value={t}>{RULE_CHECK_TYPE_LABELS[t]}</Option>
@@ -336,7 +361,11 @@ export default function RulesPage() {
             </Select>
           </Col>
           <Col xs={12} sm={6} lg={3}>
-            <Select style={{ width: '100%' }} value={filters.isActive} onChange={(v) => setFilter('isActive', v)}>
+            <Select
+              style={{ width: '100%' }}
+              value={filters.isActive}
+              onChange={(v) => setFilter('isActive', v)}
+            >
               <Option value="all">전체</Option>
               <Option value="true"><Badge status="success" text="활성" /></Option>
               <Option value="false"><Badge status="default" text="비활성" /></Option>
@@ -355,6 +384,7 @@ export default function RulesPage() {
         </Row>
       </Card>
 
+      {/* ── 테이블 (내장 pagination 제거 → 외부 Pagination으로 분리) ────── */}
       <Table<Rule>
         key={tableKey}
         columns={columns}
@@ -362,13 +392,7 @@ export default function RulesPage() {
         rowKey="ruleId"
         loading={isLoading}
         size="small"
-        pagination={{
-          ...pagination,
-          showSizeChanger: true,
-          pageSizeOptions: ['10', '20', '50', '100'],
-          showTotal: (total, range) => `${range[0]}-${range[1]} / 전체 ${total}개`,
-          onChange: (page, size) => setPagination({ current: page, pageSize: size }),
-        }}
+        pagination={false}
         rowSelection={{
           selectedRowKeys,
           onChange: (keys) => setSelectedRowKeys(keys as string[]),
@@ -385,18 +409,53 @@ export default function RulesPage() {
         scroll={{ x: 900 }}
       />
 
-      <div style={{ marginTop: 8, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          <Switch size="small" checked disabled style={{ marginRight: 4 }} />
-          활성: IntelliJ 플러그인 검사에 포함됨
-        </Text>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          <Switch size="small" checked={false} disabled style={{ marginRight: 4 }} />
-          비활성: 검사에서 제외됨
-        </Text>
-        <Text type="secondary" style={{ fontSize: 12, color: '#1677ff' }}>
-          ※ 활성 토글을 목록에서 직접 클릭하여 변경할 수 있습니다.
-        </Text>
+      {/* ── 활성 설명(legend) + 페이지네이션 ───────────────────────────── */}
+      {/*
+        UI 개선 #4:
+        - justify-content: space-between 으로 legend 좌, Pagination 우 배치
+        - flex-wrap: wrap + DOM 순서(legend 먼저) 덕분에
+          너비 부족 시 legend가 위, Pagination이 아래로 자연스럽게 래핑됨
+        - marginTop: 12 — 테이블과의 여백
+        - marginBottom: 24 — 페이지 바닥 여백
+      */}
+      <div
+        style={{
+          marginTop:      12,
+          marginBottom:   24,
+          display:        'flex',
+          flexWrap:       'wrap',
+          justifyContent: 'space-between',
+          alignItems:     'center',
+          gap:            8,
+        }}
+      >
+        {/* legend — 너비 부족 시 위로 올라감 */}
+        <Space size={16} wrap>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            <Switch size="small" checked disabled style={{ marginRight: 4 }} />
+            활성: IntelliJ 플러그인 검사에 포함됨
+          </Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            <Switch size="small" checked={false} disabled style={{ marginRight: 4 }} />
+            비활성: 검사에서 제외됨
+          </Text>
+          <Text type="secondary" style={{ fontSize: 12, color: '#1677ff' }}>
+            ※ 활성 토글을 목록에서 직접 클릭하여 변경할 수 있습니다.
+          </Text>
+        </Space>
+
+        {/* Pagination — 너비 부족 시 아래로 내려감 */}
+        <Pagination
+          current={pagination.current}
+          pageSize={pagination.pageSize}
+          total={filteredRules.length}
+          showSizeChanger
+          pageSizeOptions={['10', '20', '50', '100']}
+          showTotal={(total, range) => `${range[0]}-${range[1]} / 전체 ${total}개`}
+          onChange={(page, size) => setPagination({ current: page, pageSize: size })}
+          size="small"
+          style={{ marginLeft: 'auto' }}
+        />
       </div>
     </div>
   );

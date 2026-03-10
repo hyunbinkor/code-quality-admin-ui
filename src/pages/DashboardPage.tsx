@@ -9,6 +9,13 @@
  * Step 13 변경:
  *   - usePollHealth() 제거 → App.tsx(AppInner)에서 앱 전체 수명 동안 유지
  *     (페이지 이탈 시 폴링이 끊기는 문제 해결)
+ *
+ * UI 개선:
+ *   - 통계 카드 4개 높이 균일화
+ *     · Row에 align="stretch" → 모든 Col이 가장 키 큰 Col 높이로 맞춰짐
+ *     · Card에 height: '100%' → Col 높이를 꽉 채움
+ *     · Card body에 flexDirection: 'column' + justifyContent: 'space-between'
+ *       → Statistic은 상단 고정, Progress/부가텍스트는 하단 고정
  */
 import { useEffect, useState, useCallback } from 'react';
 import {
@@ -46,6 +53,14 @@ const CATEGORY_COLORS = [
   '#1677ff', '#52c41a', '#fa8c16', '#f5222d',
   '#722ed1', '#13c2c2', '#eb2f96', '#faad14', '#a0d911',
 ];
+
+// Card body 공통 스타일 — flex column으로 Statistic(상단) / 부가내용(하단) 고정
+const STAT_CARD_BODY_STYLE = {
+  display:        'flex',
+  flexDirection:  'column' as const,
+  justifyContent: 'space-between',
+  height:         '100%',
+};
 
 function formatDateTime(iso: string | null): string {
   if (!iso) return '없음';
@@ -110,11 +125,7 @@ export default function DashboardPage() {
         }}
       >
         <Title level={4} style={{ margin: 0 }}>대시보드</Title>
-        <Button
-          icon={<ReloadOutlined />}
-          onClick={fetchStats}
-          loading={statsLoading}
-        >
+        <Button icon={<ReloadOutlined />} onClick={fetchStats} loading={statsLoading}>
           통계 새로고침
         </Button>
       </div>
@@ -147,70 +158,92 @@ export default function DashboardPage() {
           />
         )}
 
-        <Row gutter={[16, 16]}>
+        {/*
+          높이 균일화:
+            - align="stretch" : 모든 Col이 Row 안에서 동일한 높이(가장 큰 것 기준)로 늘어남
+            - Card style={{ height: '100%' }} : Col을 꽉 채움
+            - Card styles.body : flex column → Statistic 상단 / 부가내용 하단
+        */}
+        <Row gutter={[16, 16]} align="stretch">
+
+          {/* 전체 규칙 */}
           <Col xs={24} sm={12} lg={6}>
-            <Card>
+            <Card style={{ height: '100%' }} styles={{ body: STAT_CARD_BODY_STYLE }}>
               <Statistic
                 title="전체 규칙"
                 value={stats?.rules.count ?? (totalRules || '—')}
                 prefix={<FileTextOutlined />}
                 suffix={stats || totalRules > 0 ? '개' : ''}
-                styles={{ content: { color: '#1677ff' }}}
+                styles={{ content: { color: '#1677ff' } }}
               />
-              {!stats && totalRules > 0 && (
-                <Text type="secondary" style={{ fontSize: 11 }}>로컬 기준</Text>
-              )}
+              {/* 하단 고정 영역 — 내용 없을 때도 공간 예약하여 다른 카드와 높이 맞춤 */}
+              <div style={{ minHeight: 22, marginTop: 8 }}>
+                {!stats && totalRules > 0 && (
+                  <Text type="secondary" style={{ fontSize: 11 }}>로컬 기준</Text>
+                )}
+              </div>
             </Card>
           </Col>
 
+          {/* 활성 규칙 */}
           <Col xs={24} sm={12} lg={6}>
-            <Card>
+            <Card style={{ height: '100%' }} styles={{ body: STAT_CARD_BODY_STYLE }}>
               <Statistic
                 title="활성 규칙"
                 value={totalRules > 0 ? activeRules : '—'}
                 prefix={<FileTextOutlined />}
                 suffix={totalRules > 0 ? '개' : ''}
-                styles={{ content: { color: '#52c41a' }}}
+                styles={{ content: { color: '#52c41a' } }}
               />
-              {totalRules > 0 && (
-                <Progress
-                  percent={Math.round((activeRules / totalRules) * 100)}
-                  size="small"
-                  strokeColor="#52c41a"
-                  style={{ marginTop: 8 }}
-                />
-              )}
+              {/* Progress 또는 빈 공간 — 높이 예약 */}
+              <div style={{ minHeight: 22, marginTop: 8 }}>
+                {totalRules > 0 && (
+                  <Progress
+                    percent={Math.round((activeRules / totalRules) * 100)}
+                    size="small"
+                    strokeColor="#52c41a"
+                  />
+                )}
+              </div>
             </Card>
           </Col>
 
+          {/* 태그 수 */}
           <Col xs={24} sm={12} lg={6}>
-            <Card>
+            <Card style={{ height: '100%' }} styles={{ body: STAT_CARD_BODY_STYLE }}>
               <Statistic
                 title="태그 수"
                 value={stats?.tags.count ?? '—'}
                 prefix={<TagsOutlined />}
                 suffix={stats ? '개' : ''}
-                styles={{ content: { color: '#722ed1' }}}
+                styles={{ content: { color: '#722ed1' } }}
               />
-              {stats && (
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  복합 태그 {stats.tags.compoundCount}개 포함
-                </Text>
-              )}
+              {/* 복합 태그 멘트 또는 빈 공간 */}
+              <div style={{ minHeight: 22, marginTop: 8 }}>
+                {stats && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    복합 태그 {stats.tags.compoundCount}개 포함
+                  </Text>
+                )}
+              </div>
             </Card>
           </Col>
 
+          {/* 카테고리 수 */}
           <Col xs={24} sm={12} lg={6}>
-            <Card>
+            <Card style={{ height: '100%' }} styles={{ body: STAT_CARD_BODY_STYLE }}>
               <Statistic
                 title="카테고리 수"
                 value={stats?.tags.categories.length ?? '—'}
                 prefix={<AppstoreOutlined />}
                 suffix={stats ? '개' : ''}
-                styles={{ content: { color: '#fa8c16' }}}
+                styles={{ content: { color: '#fa8c16' } }}
               />
+              {/* 빈 공간 예약 — 다른 카드와 높이 맞춤 */}
+              <div style={{ minHeight: 22, marginTop: 8 }} />
             </Card>
           </Col>
+
         </Row>
       </Spin>
 
@@ -261,23 +294,19 @@ export default function DashboardPage() {
             <Statistic
               title="마지막 Pull"
               value={formatDateTime(lastPullAt)}
-              styles={{ content: { fontSize: 15, color: lastPullAt ? '#1677ff' : '#bfbfbf' }}}
+              styles={{ content: { fontSize: 15, color: lastPullAt ? '#1677ff' : '#bfbfbf' } }}
             />
-
             <Divider style={{ margin: '16px 0' }} />
-
             <Statistic
               title="마지막 Push"
               value={formatDateTime(lastPushAt)}
-              styles={{ content: { fontSize: 15, color: lastPushAt ? '#52c41a' : '#bfbfbf' }}}
+              styles={{ content: { fontSize: 15, color: lastPushAt ? '#52c41a' : '#bfbfbf' } }}
             />
-
             <Divider style={{ margin: '16px 0' }} />
-
             <Statistic
               title="로컬 데이터"
               value={totalRules > 0 ? `규칙 ${totalRules}개 로드됨` : 'Pull이 필요합니다'}
-              styles={{ content: { fontSize: 15, color: totalRules > 0 ? '#52c41a' : '#bfbfbf' }}}
+              styles={{ content: { fontSize: 15, color: totalRules > 0 ? '#52c41a' : '#bfbfbf' } }}
             />
           </Card>
         </Col>
